@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#d6195b">
+  <meta name="robots" content="noindex">
+  <title>Painel · Oggi Sorvetes</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍦</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/admin">
+        <span class="brand-name" data-store-name>Oggi Sorvetes</span>
+        <span class="brand-sub">Painel da loja</span>
+      </a>
+      <span class="spacer"></span>
+      <nav id="nav" class="hidden">
+        <button data-view="painel">Painel</button>
+        <button data-view="pedidos">Pedidos<span class="badge-count hidden" id="badge-novos"></span></button>
+        <button data-view="movimentar">Entrada / Saída</button>
+        <button data-view="estoque">Estoque</button>
+        <button data-view="movimentos">Histórico</button>
+        <button data-view="produtos">Produtos</button>
+        <button data-view="clientes">Clientes<span class="badge-count hidden" id="badge-clientes"></span></button>
+        <button data-view="config">Config.</button>
+        <button id="btn-logout">Sair</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app">
+    <div class="empty">Carregando…</div>
+  </main>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/admin.js"></script>
+</body>
+</html>

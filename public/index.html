@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#d6195b">
+  <title>Oggi Sorvetes · Pedidos B2B</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍦</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/">
+        <span class="brand-name" data-store-name>Oggi Sorvetes</span>
+        <span class="brand-sub" data-store-sub>Pedidos para empresas</span>
+      </a>
+      <span class="spacer"></span>
+      <nav id="nav" class="hidden">
+        <button data-view="catalogo" class="active">Catálogo</button>
+        <button data-view="pedidos">Meus pedidos</button>
+        <button id="btn-logout">Sair</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app">
+    <div class="empty">Carregando…</div>
+  </main>
+
+  <div id="cart-bar" class="cart-bar hidden">
+    <div class="cart-bar-inner">
+      <div>
+        <div class="small muted" id="cart-count"></div>
+        <div class="total" id="cart-total"></div>
+      </div>
+      <span style="flex:1"></span>
+      <button id="btn-checkout">Revisar pedido →</button>
+    </div>
+  </div>
+
+  <script src="/js/common.js"></script>
+  <script src="/js/loja.js"></script>
+</body>
+</html>
