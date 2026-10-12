@@ -9,15 +9,24 @@ function esc(value) {
 }
 
 const money = (cents) => (Number(cents || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Custo unitário pode ter frações de centavo (ex.: R$ 7,275).
+const moneyPrecise = (cents) => (Number(cents || 0) / 100).toLocaleString('pt-BR', {
+  style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 4,
+});
+const pct = (v) => (v === null || v === undefined ? '—' : `${(v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`);
+
+// Fuso da loja: America/Cuiaba (UTC−4). Todas as datas da tela usam este fuso.
+const TZ = 'America/Cuiaba';
+const todayLocal = () => new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
 const centsToInput = (cents) => (Number(cents || 0) / 100).toFixed(2).replace('.', ',');
 
 function fmtDate(sqlDate, withTime = true) {
   if (!sqlDate) return '';
   // datas do banco estão em UTC ("YYYY-MM-DD HH:MM:SS")
-  const d = sqlDate.length > 10 ? new Date(sqlDate.replace(' ', 'T') + 'Z') : new Date(sqlDate + 'T12:00:00');
+  const d = sqlDate.length > 10 ? new Date(sqlDate.replace(' ', 'T') + 'Z') : new Date(sqlDate + 'T12:00:00Z');
   return withTime
-    ? d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleDateString('pt-BR');
+    ? d.toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { timeZone: sqlDate.length > 10 ? TZ : 'UTC' });
 }
 
 function fmtCnpj(c) {
@@ -168,4 +177,29 @@ async function applyBranding() {
   } catch {
     return {};
   }
+}
+
+// Reduz a foto no navegador (lado maior até `max` px) antes de enviar. Fundo branco para fotos com transparência.
+function resizeImage(file, max = 800) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      let dataUrl = canvas.toDataURL('image/webp', 0.85);
+      if (!dataUrl.startsWith('data:image/webp')) dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const [head, data] = dataUrl.split(',');
+      resolve({ mime: head.slice(5, head.indexOf(';')), data, preview: dataUrl });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não consegui abrir esta imagem.')); };
+    img.src = url;
+  });
 }

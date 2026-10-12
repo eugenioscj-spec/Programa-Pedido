@@ -5,7 +5,7 @@ Sistema web para a loja receber **pedidos de clientes empresa (B2B)** por um lin
 | Link | Para quem | O que faz |
 |---|---|---|
 | `https://SEU-ENDERECO/` | Clientes B2B | Cadastro por CNPJ, catálogo, pedido por **caixa fechada ou unidade**, histórico, repetir pedido |
-| `https://SEU-ENDERECO/admin` | Loja | Pedidos, separação com leitor, entrada de mercadoria, estoque, inventário, produtos, clientes |
+| `https://SEU-ENDERECO/admin` | Loja | Pedidos, separação com leitor, entrada com custo, saídas por destino, estoque a custo, relatórios, produtos com foto, clientes |
 
 ---
 
@@ -25,19 +25,64 @@ Cancelado           ──►  libera a reserva; se já tinha sido separado, faz
 - **Reservado**: pedidos novos/confirmados ainda não separados.
 - **Disponível** = físico − reservado. É o que o cliente consegue pedir.
 
-Toda movimentação fica registrada no **Histórico** (data, tipo, quantidade, saldo, pedido/nota, usuário) e pode ser exportada para planilha.
+Toda movimentação fica registrada no **Histórico** (data, tipo, quantidade, valor, saldo, destino/motivo, pedido/nota, usuário) e pode ser exportada para planilha. Lançamentos **nunca são editados nem apagados**: para corrigir, use **Estornar**, que lança o contrário pelo mesmo valor e guarda o motivo.
 
 ### Tipos de movimentação
 
-| Tipo | Quando usar |
+A mercadoria que sai da câmara tem só quatro destinos: **venda B2B**, **transferência para uma loja**, **perda** ou **saída sem venda**. Além disso há os ajustes de inventário.
+
+| Tipo | Quando acontece |
 |---|---|
-| Entrada (recebimento) | Mercadoria chegou da franqueadora/fornecedor. Informe o nº da nota. |
-| Saída (pedido) | Automática quando o pedido é separado. |
-| Estorno (pedido) | Automático quando um pedido separado é cancelado. |
-| Transferência p/ loja | Produtos que saem da câmara para o balcão da loja. |
-| Perda / avaria | Produto danificado, vencido, descongelado. |
-| Saída avulsa | Bonificação, amostra, venda fora do portal. |
-| Ajuste / inventário | Contagem física: o sistema lança a diferença sozinho. |
+| Entrada | Mercadoria chegou (nota da franqueadora/fornecedor). Informe o **custo** por caixa ou por unidade. Custo zero (bonificação) só com observação. |
+| Venda B2B | Automática quando o pedido é **separado**. Grava o custo (CMV) e a receita. |
+| Transferência p/ loja | Saída para a **Loja 1 - Centro** ou a **Loja 2** (cadastre outras em Config.). Grava o preço de varejo do dia. |
+| Perda | Exige o **motivo**: vencimento, avaria/embalagem, descongelamento, divergência no recebimento, furto/extravio ou outros (com observação). Motivos editáveis em Config. |
+| Saída sem venda | Bonificação a cliente, amostra/degustação, consumo interno ou outros. Cliente opcional. |
+| Sobra / Divergência de inventário | Lançadas pela contagem. Divergência (faltou) aparece nos relatórios junto das perdas, com nome próprio. |
+| Custo inicial | Dá valor a um produto que tem estoque mas não tem custo (ex.: dados de antes desta versão), sem mudar as unidades. |
+| Estorno | Desfaz um lançamento, pelo mesmo valor. Venda só se desfaz cancelando o pedido. |
+
+Saídas manuais acima de um valor (padrão R$ 200,00, ajustável em Config.) pedem observação.
+
+## Como o valor do estoque é calculado
+
+O sistema usa o **custo médio ponderado móvel**, o mais comum na contabilidade de comércio.
+
+- Cada produto guarda **quantas unidades** tem e **quanto elas valem a custo** (em R$). O custo médio é sempre a divisão de um pelo outro. Exemplo: caixa de R$ 87,30 com 12 un. = R$ 7,275 por unidade.
+- **Entrada:** soma as unidades e soma o valor da nota. Exemplo: 10 un a R$ 10,00 + 10 un a R$ 20,00 = 20 un valendo R$ 300,00 (médio R$ 15,00).
+- **Qualquer saída** (venda, transferência, perda, sem venda, divergência): sai pelo custo médio do momento, arredondado ao centavo. 5 un do exemplo acima = R$ 75,00.
+- **Saída que zera o produto** leva todo o valor que sobrou, para nunca ficar "centavo fantasma" em produto sem unidade.
+- **Estorno** devolve exatamente o valor que saiu no lançamento original, mesmo que o custo médio já tenha mudado.
+- **Sobra de inventário** entra pelo custo médio atual (ou, se o produto estiver zerado, pelo custo da última entrada).
+- **Produto sem custo:** quem tinha estoque antes desta versão fica marcado "sem custo". Informe o custo em **Estoque → Informar custo inicial**, ou deixe para a próxima entrada: o custo da nota valoriza também o estoque antigo (na tela de entrada dá para informar outro custo). Até lá, os relatórios em R$ mostram esses produtos à parte, sem inventar valor.
+- O sistema não aceita saldo negativo, nem em unidades nem em valor.
+- Datas e meses seguem o horário de **Cuiabá (UTC−4)**, independente do servidor. A **venda é reconhecida quando a mercadoria sai da câmara** (separação), que é o mesmo momento da baixa no estoque.
+
+## Relatórios
+
+Em **Relatórios**, escolha o período (ou "Este mês", "Mês passado", "Este ano") e exporte para Excel ou CSV.
+
+1. **Conciliação** (o mais importante): estoque inicial + entradas − vendas (a custo) − transferências − perdas − saídas sem venda ± ajustes = estoque final, em unidades e em R$, por produto e no total. Se não bater com a posição na data final, a diferença aparece **em vermelho**.
+2. **Posição de estoque** em qualquer data: unidades (cx + un), custo médio, valor a custo, a preço B2B e a preço de varejo. Datas passadas são reconstruídas pelo histórico.
+3. **Vendas B2B:** por cliente, produto e mês: receita, CMV, margem bruta em R$ e %. Cancelamentos descontam no mês do cancelamento.
+4. **Perdas e divergências:** por motivo, produto e mês, em unidades e R$ a custo, e o % sobre as entradas do período.
+5. **Transferências:** por loja, produto e mês, a custo e a preço de varejo.
+
+O painel inicial mostra o estoque a custo (e a preço B2B), as vendas e a margem B2B do mês, as perdas do mês e um aviso quando há produto sem custo.
+
+### Como conferir a conciliação
+
+1. Abra **Relatórios → Conciliação** e clique em **Este ano** (ou escolha um período).
+2. No quadro **Resumo**, a linha **Diferença** precisa ser **0 un** e **R$ 0,00**. Uma faixa verde confirma: "A conciliação fecha".
+3. Para conferir com a câmara, abra **Posição de estoque** na data final: o total a custo é o mesmo "Estoque final" da conciliação.
+4. Se aparecer algo em vermelho, exporte para Excel e me mande: cada linha mostra o produto e o tipo de movimentação.
+
+## Fotos e Catálogo Oggi 2026
+
+- Cada produto pode ter uma **foto** (Produtos → Editar → Adicionar foto). Ela aparece no catálogo do cliente. O navegador reduz a foto antes de enviar, e ela fica guardada no banco, então o backup leva as fotos junto.
+- **Produtos → Catálogo Oggi 2026** cadastra os 90 produtos do catálogo, com foto, preço (B2B e varejo) e unidades por caixa. Quem já existe não é alterado. Os produtos entram sem código de barras: bipe na tela do produto ou preencha pela planilha.
+- **Produtos → Unidades por caixa** muda a quantidade por caixa de uma linha inteira de uma vez (o preço da caixa calculado acompanha).
+- No catálogo do cliente, produtos esgotados ficam escondidos, com um botão "Mostrar esgotados".
 
 ## Leitor de código de barras
 
@@ -58,7 +103,7 @@ Pelo celular também funciona: digite o código ou o nome do produto no campo.
 2. Nesta página do GitHub, clique em **Code → Download ZIP** e extraia o arquivo (botão direito → *Extrair tudo*).
 3. Dentro da pasta, dê dois cliques em **`Testar no Windows.bat`** (ou **`Testar no Mac.command`**).
 
-Na primeira vez ele instala tudo e carrega produtos e um cliente **de exemplo**. Depois abre o painel no navegador e mostra o endereço para testar pelo celular, que precisa estar no mesmo Wi-Fi. Os dados de teste ficam na pasta `data` e não vão para o sistema publicado.
+Na primeira vez ele instala tudo e carrega **dados de exemplo**: o Catálogo Oggi 2026 com fotos, dois clientes e 45 dias de movimentações de todos os tipos (com custos), para você testar os relatórios. Depois abre o painel no navegador e mostra o endereço para testar pelo celular, que precisa estar no mesmo Wi-Fi. Os dados de teste ficam na pasta `data` e não vão para o sistema publicado.
 
 ## Instalar e rodar no seu computador (para desenvolvedores)
 
@@ -116,6 +161,8 @@ Em **Produtos → Importar planilha → Baixe a planilha modelo (Excel)**. Preen
 - Produtos com o mesmo código de barras (ou SKU) são **atualizados**. Os outros são criados.
 - A importação **não altera o estoque**. Para o estoque inicial, use Entrada ou Inventário.
 - Se `preco_caixa` ficar vazio, o sistema usa preço da unidade × unidades por caixa.
+- `preco_varejo` é o preço no balcão (opcional), usado para valorizar as transferências para as lojas.
+- A planilha modelo vem com os produtos já cadastrados (inclusive os do catálogo, com o SKU `OG26-…`): preencha os códigos de barras e reimporte.
 
 ---
 
@@ -123,22 +170,23 @@ Em **Produtos → Importar planilha → Baixe a planilha modelo (Excel)**. Preen
 
 ```
 server.js              inicia o servidor
-src/db.js              banco de dados (tabelas)
-src/inventory.js       regras de estoque e pedidos (reserva, baixa, estorno, inventário)
+src/db.js              banco de dados (esquema da versão 1)
+src/migrations.js      atualizações do banco (versão em settings.schema_version; copia o banco antes)
+src/inventory.js       regras de estoque: move() é a única função que altera estoque (custo médio, estorno…)
+src/reports.js         relatórios (posição, conciliação, vendas, perdas, transferências)
+src/time.js            fuso de Cuiabá (todas as consultas por data passam por aqui)
+src/export.js          exportação de relatórios para .xlsx/.csv
+src/catalog.js         carregador do Catálogo Oggi 2026 (catalog/oggi-2026.json + fotos)
 src/app.js             rotas da API (cliente e painel)
 src/auth.js            senhas e sessões
 src/util.js            CNPJ, valores em R$, CSV
 public/index.html      portal do cliente   (public/js/loja.js)
 public/admin.html      painel da loja      (public/js/admin.js)
-test/                  testes automáticos
+test/                  testes automáticos (npm test)
 ```
 
 ## Próximos passos possíveis
 
-- Avisos automáticos por WhatsApp/e-mail (pedido novo, pedido confirmado)
-- Tabela de preço por cliente / descontos por volume
-- Controle de lote e validade
-- Emissão de NF-e integrada (Bling, Tiny, Omie…)
-- Integração com o PDV da loja para baixar as vendas do balcão
-- Leitura de código de barras pela câmera do celular
-- Fotos dos produtos no catálogo
+**Fase 2 (controle fino):** lote e validade com separação FEFO, preço por cliente e desconto por volume, pagamento dos pedidos e contas a receber, perfis de usuário (só o dono vê custo e margem), fechamento mensal, devolução de cliente B2B, saldo dentro das lojas, entrada direto pelo XML da nota fiscal.
+
+**Fase 3 (análise):** giro e cobertura de estoque, curva ABC, sazonalidade e sugestão de compra, ranking de clientes, painel por loja (integração com o PDV), NF-e, WhatsApp e leitura pela câmera do celular.

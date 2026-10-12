@@ -235,6 +235,28 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .empty { text-align: center; padding: 40px 10px; color: var(--muted); }
 
+/* ---------- v2: fotos, custos, relatórios ---------- */
+.thumb { display: block; width: 44px; height: 44px; object-fit: contain; border-radius: 8px; background: #f6f2f7; }
+.thumb-empty { border: 1px dashed var(--line); }
+.product-photo { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }
+#photo-preview { width: 120px; height: 120px; border-radius: 12px; background: #f6f2f7; display: grid; place-items: center; overflow: hidden; flex: none; }
+#photo-preview img { width: 100%; height: 100%; object-fit: contain; }
+.qty-input { width: 70px; text-align: right; }
+.money-input { width: 96px; text-align: right; }
+.per-select { width: auto; padding: 8px 6px; }
+.sub-row td { background: var(--warn-soft); font-size: .88rem; }
+.sub-row input, .sub-row select { display: inline-block; margin: 2px 4px; }
+.total-row td { font-weight: 700; background: #faf8fb; }
+.row-danger td { background: var(--danger-soft); color: #8e1c1c; font-weight: 650; }
+.report-head { margin: 6px 0 12px; }
+.report-head h2 { margin-bottom: 2px; }
+.report-section h2 { font-size: 1.05rem; }
+.report-section td, .report-section th { white-space: nowrap; }
+.report-section td:first-child { white-space: normal; min-width: 160px; }
+.p-img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 10px; background: #faf7fb; }
+.p-img-empty { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; background: linear-gradient(135deg, var(--brand-soft), #efe6f7); }
+.alert.row { display: flex; }
+
 @media (max-width: 640px) {
   main { padding: 14px 12px 90px; }
   .brand-sub { display: none; }

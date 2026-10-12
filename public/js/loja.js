@@ -7,6 +7,7 @@ const state = {
   products: [],
   category: 'Todos',
   search: '',
+  showSoldOut: false,
   cart: loadCart(),
 };
 const app = $('#app');
@@ -170,6 +171,7 @@ async function renderCatalog() {
       ${state.config.order_notice ? `<div class="alert alert-info small">${esc(state.config.order_notice)}</div>` : ''}
       <div class="chips">${categories.map((c) => `<button class="chip ${c === state.category ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
       <div class="products" id="product-list"></div>
+      <p class="center" id="soldout-wrap"></p>
     </div>`;
   $$('.chip').forEach((b) => b.addEventListener('click', () => {
     state.category = b.dataset.cat;
@@ -208,13 +210,24 @@ function buyLine(p, type) {
 
 function renderProductList() {
   const term = state.search.trim().toLowerCase();
-  const list = state.products.filter((p) =>
+  const matching = state.products.filter((p) =>
     (state.category === 'Todos' || p.category === state.category)
     && (!term || p.name.toLowerCase().includes(term) || (p.barcode || '').includes(term)));
+  // esgotados ficam escondidos (e por último) até o cliente pedir para ver
+  const soldOut = matching.filter((p) => p.available_units <= 0);
+  const list = matching.filter((p) => p.available_units > 0).concat(state.showSoldOut ? soldOut : []);
+  const wrap = $('#soldout-wrap');
+  wrap.innerHTML = soldOut.length
+    ? `<button class="btn-secondary btn-sm" id="btn-soldout">${state.showSoldOut ? 'Esconder' : 'Mostrar'} esgotados (${soldOut.length})</button>` : '';
+  if (soldOut.length) $('#btn-soldout').addEventListener('click', () => { state.showSoldOut = !state.showSoldOut; renderProductList(); });
   const el = $('#product-list');
-  if (!list.length) { el.innerHTML = '<div class="empty">Nenhum produto encontrado.</div>'; return; }
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">${matching.length ? 'Nenhum produto disponível agora nesta categoria.' : 'Nenhum produto encontrado.'}</div>`;
+    return;
+  }
   el.innerHTML = list.map((p) => `
     <div class="product">
+      ${p.image_url ? `<img class="p-img" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">` : '<div class="p-img-empty" aria-hidden="true"></div>'}
       <div class="p-cat">${esc(p.category)}</div>
       <div class="p-name">${esc(p.name)}</div>
       ${p.description ? `<div class="small muted">${esc(p.description)}</div>` : ''}
