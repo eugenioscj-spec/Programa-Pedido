@@ -127,8 +127,21 @@ const DEFAULT_SETTINGS = {
   order_notice: 'Pedidos confirmados em até 1 dia útil. Entrega/retirada combinada pelo WhatsApp.',
 };
 
+// Onde o banco fica salvo. No Railway, se houver um Volume conectado, usa ele automaticamente.
+function defaultDbPath() {
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  if (process.env.RAILWAY_VOLUME_MOUNT_PATH) return path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'oggi.db');
+  return path.join(__dirname, '..', 'data', 'oggi.db');
+}
+
+// Em hospedagem sem disco persistente, os dados somem a cada atualização.
+function storageIsPersistent() {
+  const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  return !onRailway || !!(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DB_PATH);
+}
+
 function openDatabase(file) {
-  const target = file || process.env.DB_PATH || path.join(__dirname, '..', 'data', 'oggi.db');
+  const target = file || defaultDbPath();
   if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true });
   const db = new Database(target);
   db.pragma('journal_mode = WAL');
@@ -145,4 +158,4 @@ function getSettings(db) {
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
 }
 
-module.exports = { openDatabase, getSettings, DEFAULT_SETTINGS };
+module.exports = { openDatabase, getSettings, storageIsPersistent, DEFAULT_SETTINGS };

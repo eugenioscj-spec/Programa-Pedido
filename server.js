@@ -7,12 +7,22 @@ const { hashPassword } = require('./src/auth');
 const PORT = Number(process.env.PORT) || 3000;
 const db = openDatabase();
 
-// Cria o administrador a partir de variáveis de ambiente (recomendado ao publicar).
+// ADMIN_EMAIL + ADMIN_PASSWORD (variáveis da hospedagem): cria esse administrador ou,
+// se ele já existir, redefine a senha dele. Serve para o primeiro acesso e para
+// recuperar a senha esquecida. Depois de entrar, apague as variáveis.
 const { ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_NAME } = process.env;
-if (ADMIN_EMAIL && ADMIN_PASSWORD && db.prepare('SELECT COUNT(*) n FROM admins').get().n === 0) {
-  db.prepare('INSERT INTO admins (name, email, password_hash) VALUES (?, ?, ?)')
-    .run(ADMIN_NAME || 'Administrador', ADMIN_EMAIL.trim(), hashPassword(ADMIN_PASSWORD));
-  console.log(`Administrador ${ADMIN_EMAIL} criado.`);
+if (ADMIN_EMAIL && ADMIN_PASSWORD) {
+  const email = ADMIN_EMAIL.trim();
+  const existing = db.prepare('SELECT id FROM admins WHERE email = ?').get(email);
+  if (existing) {
+    db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(ADMIN_PASSWORD), existing.id);
+    db.prepare("DELETE FROM sessions WHERE user_type = 'admin' AND user_id = ?").run(existing.id);
+    console.log(`Senha do administrador ${email} redefinida.`);
+  } else {
+    db.prepare('INSERT INTO admins (name, email, password_hash) VALUES (?, ?, ?)')
+      .run(ADMIN_NAME || 'Administrador', email, hashPassword(ADMIN_PASSWORD));
+    console.log(`Administrador ${email} criado.`);
+  }
 }
 
 const app = createApp(db);

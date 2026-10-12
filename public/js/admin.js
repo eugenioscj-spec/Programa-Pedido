@@ -102,6 +102,9 @@ async function renderDashboard() {
   if (!d) throw Object.assign(new Error('Faça login'), { status: 401 });
   const c = d.counts;
   app.innerHTML = `
+    ${d.storage_ok ? '' : `<div class="alert alert-error"><strong>Atenção: os dados NÃO estão sendo salvos de forma permanente.</strong>
+      Falta conectar um <strong>Volume</strong> (disco) ao serviço no Railway. Sem ele, tudo o que for cadastrado some na próxima atualização.
+      Veja o passo “Criar o disco” no guia de instalação.</div>`}
     <div class="section-head"><h1>Olá, ${esc(A.admin.name.split(' ')[0])}!</h1><span class="spacer"></span>
       <button data-go="movimentar">+ Entrada de mercadoria</button></div>
     <div class="grid grid-4">
@@ -631,27 +634,34 @@ function openProductForm(p, preset = {}, onSaved) {
 function openImport() {
   const m = openModal(`
     <div class="modal-head"><h2>Importar produtos</h2><button class="modal-close" data-close>×</button></div>
-    <p class="small">Envie um arquivo <strong>.csv</strong> (Excel → Salvar como → CSV). Produtos com o mesmo código de barras (ou SKU) são <strong>atualizados</strong>; os demais são criados. O estoque não é alterado.</p>
-    <p class="small muted">Colunas (primeira linha): <span class="mono">codigo_barras; codigo_caixa; sku; nome; categoria; unidades_caixa; preco_unidade; preco_caixa; estoque_minimo; vende_unidade; vende_caixa</span></p>
-    <p class="small"><button class="btn-link" id="btn-template">Baixar modelo de planilha</button> · <button class="btn-link" id="btn-export">Exportar produtos atuais</button></p>
-    <input type="file" id="import-file" accept=".csv,text/csv">
+    <ol class="small" style="padding-left:18px">
+      <li><button class="btn-link" id="btn-template">Baixe a planilha modelo (Excel)</button>. Se você já tem produtos cadastrados, ela vem com eles preenchidos.</li>
+      <li>Preencha uma linha por produto. A aba “Como preencher” explica cada coluna.</li>
+      <li>Salve e escolha o arquivo abaixo.</li>
+    </ol>
+    <p class="small muted">Produtos com o mesmo código de barras são <strong>atualizados</strong>; os outros são criados. O estoque <strong>não</strong> é alterado: para lançar o estoque use “Entrada / Saída”.</p>
+    <input type="file" id="import-file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv">
     <div id="import-result" style="margin-top:12px"></div>
     <div class="row" style="margin-top:12px"><button id="btn-do-import">Importar</button><button class="btn-secondary" data-close>Fechar</button></div>`);
-  $('#btn-template', m).addEventListener('click', () => {
-    const csv = '﻿codigo_barras;codigo_caixa;sku;nome;categoria;unidades_caixa;preco_unidade;preco_caixa;estoque_minimo;vende_unidade;vende_caixa\r\n7890000000000;17890000000007;ABC01;Picolé Exemplo;Picolés;24;4,50;98,00;48;sim;sim\r\n';
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    a.download = 'modelo-produtos.csv';
-    a.click();
-  });
-  $('#btn-export', m).addEventListener('click', () => downloadUrl('/api/admin/produtos.csv'));
+  $('#btn-template', m).addEventListener('click', () => downloadUrl('/api/admin/produtos/modelo.xlsx'));
   $('#btn-do-import', m).addEventListener('click', () => guard(async () => {
     const file = $('#import-file', m).files[0];
     if (!file) return toast('Escolha um arquivo.', 'error');
     const buf = await file.arrayBuffer();
-    let text = new TextDecoder('utf-8').decode(buf);
-    if (text.includes('�')) text = new TextDecoder('windows-1252').decode(buf); // Excel em PT-BR
-    const r = await api('/api/admin/produtos/importar', { method: 'POST', body: { csv: text } });
+    let body;
+    if (/\.xlsx$/i.test(file.name)) {
+      let bin = '';
+      const bytes = new Uint8Array(buf);
+      for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+      body = { xlsx: btoa(bin) };
+    } else if (/\.xls$/i.test(file.name)) {
+      return toast('Arquivo .xls antigo: no Excel use "Salvar como" → "Pasta de Trabalho do Excel (.xlsx)".', 'error');
+    } else {
+      let text = new TextDecoder('utf-8').decode(buf);
+      if (text.includes('\uFFFD')) text = new TextDecoder('windows-1252').decode(buf); // Excel em PT-BR
+      body = { csv: text };
+    }
+    const r = await api('/api/admin/produtos/importar', { method: 'POST', body });
     $('#import-result', m).innerHTML = `
       <div class="alert ${r.errors.length ? 'alert-warn' : 'alert-ok'}">${r.created} criados · ${r.updated} atualizados${r.errors.length ? ` · ${r.errors.length} com erro` : ''}</div>
       ${r.errors.length ? `<ul class="small">${r.errors.slice(0, 50).map((e) => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}`;

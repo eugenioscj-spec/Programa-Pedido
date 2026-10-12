@@ -78,22 +78,23 @@ Testes automáticos: `npm test`.
 | Variável | Padrão | Para que serve |
 |---|---|---|
 | `PORT` | `3000` | Porta do servidor |
-| `DB_PATH` | `./data/oggi.db` | Onde fica o arquivo do banco de dados |
-| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | — | Se definidas, criam o administrador ao iniciar (só quando ainda não existe nenhum) |
+| `DB_PATH` | `./data/oggi.db` (ou o Volume do Railway) | Onde fica o arquivo do banco de dados |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | — | Ao iniciar, criam esse administrador ou redefinem a senha dele. Apague depois de usar. |
 
 ## Colocar no ar (link para os clientes)
 
-O sistema é um único programa Node.js com banco **SQLite**, que é um arquivo só. Qualquer hospedagem que rode Node.js **com disco persistente** serve. Algumas opções:
+O caminho recomendado é o **Railway** (cerca de US$ 5/mês). O projeto já vem configurado para ele (`railway.json`):
 
-1. **Railway** ou **Render** (mais simples, cerca de US$ 5–7/mês): conecte este repositório do GitHub, comando de início `npm start`. **Crie um volume/disco persistente** e aponte `DB_PATH` para ele (ex.: `/data/oggi.db`). Sem disco persistente, os dados se perdem a cada atualização.
-2. **VPS** (Hostinger, DigitalOcean, Contabo, etc.): instale o Node, rode com `pm2 start server.js` e coloque um domínio com HTTPS (Caddy ou Nginx).
+1. Em railway.com, entre com a conta do GitHub. Clique em **New Project → Deploy from GitHub repo** e escolha este repositório.
+2. Adicione um **Volume** (disco) ao serviço, com caminho `/data`. O sistema detecta o volume sozinho (`RAILWAY_VOLUME_MOUNT_PATH`) e salva o banco nele. **Sem volume os dados se perdem**, e o painel mostra um aviso vermelho.
+3. Em **Settings → Networking → Generate Domain**, gere o endereço público.
+4. Abra `https://SEU-ENDERECO/admin` e crie o administrador. O primeiro a acessar cria o usuário, então faça isso logo depois de gerar o endereço.
 
-Depois de publicar:
-1. Defina `ADMIN_EMAIL` e `ADMIN_PASSWORD` na hospedagem **antes** de publicar (recomendado). Se não definir, acesse `/admin` **imediatamente** e crie o administrador, porque o primeiro a acessar cria o usuário.
-2. Em **Config.**, preencha o WhatsApp da loja, o pedido mínimo e o aviso do catálogo.
-3. Cadastre os produtos (um a um ou **importando planilha** em Produtos → Importar planilha).
-4. Lance o estoque inicial em **Entrada / Saída → Inventário** (ou Entrada).
-5. Envie o link `https://SEU-ENDERECO/` para os clientes.
+Toda vez que um código novo for enviado para o GitHub, o Railway atualiza o sistema sozinho, e os dados no volume continuam lá.
+
+**Esqueceu a senha do painel?** No Railway, em **Variables**, crie `ADMIN_EMAIL` (o seu e-mail de login) e `ADMIN_PASSWORD` (a nova senha). O sistema reinicia com a senha nova. Depois de entrar, apague as duas variáveis.
+
+Outra opção é uma **VPS** (Hostinger, DigitalOcean, etc.): instale o Node 22, rode com `pm2 start server.js` e coloque um domínio com HTTPS.
 
 ### Backup
 
@@ -101,13 +102,9 @@ Em **Config. → Baixar backup** você baixa uma cópia completa do sistema. Fa�
 
 ## Importar produtos por planilha
 
-No Excel, monte uma planilha com estas colunas na primeira linha e salve como **CSV**:
+Em **Produtos → Importar planilha → Baixe a planilha modelo (Excel)**. Preencha uma linha por produto e importe o próprio arquivo `.xlsx`. Também aceita `.csv`.
 
-```
-codigo_barras;codigo_caixa;sku;nome;categoria;unidades_caixa;preco_unidade;preco_caixa;estoque_minimo;vende_unidade;vende_caixa
-7891234567890;17891234567897;PIC01;Picolé Chocolate;Picolés;24;4,50;98,00;48;sim;sim
-```
-
+- A aba "Como preencher" explica cada coluna. Dica: com o cursor na célula `codigo_barras`, bipe o produto com o leitor.
 - Produtos com o mesmo código de barras (ou SKU) são **atualizados**. Os outros são criados.
 - A importação **não altera o estoque**. Para o estoque inicial, use Entrada ou Inventário.
 - Se `preco_caixa` ficar vazio, o sistema usa preço da unidade × unidades por caixa.

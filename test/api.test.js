@@ -103,6 +103,9 @@ test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', asy
   assert.equal(meus[0].admin_notes, undefined);
 
   const csv = await adm('GET', '/api/admin/produtos.csv');
+  assert.equal((await adm('GET', '/api/health')).data.ok, true);
+  const dash = await adm('GET', '/api/admin/dashboard');
+  assert.equal(dash.data.storage_ok, true);
   assert.match(csv.data, /Picolé Uva/);
 
   // bloqueio derruba a sessão do cliente
@@ -130,6 +133,25 @@ test('importação de produtos por CSV', async (t) => {
   assert.equal(cone.unit_price_cents, 900);
   assert.equal(cone.name, 'Cone');
   assert.equal(cone.box_price_cents, 9600);
+
+  // planilha do Excel (.xlsx): baixa o modelo (já com os produtos), altera e reimporta
+  const ExcelJS = require('exceljs');
+  const semLogin = await fetch(`http://127.0.0.1:${server.address().port}/api/admin/produtos/modelo.xlsx`);
+  assert.equal(semLogin.status, 401, 'modelo exige login');
+  assert.equal((await adm('GET', '/api/admin/produtos/modelo.xlsx')).status, 200);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Produtos');
+  ws.addRow(['codigo_barras', 'nome', 'categoria', 'unidades_caixa', 'preco_unidade', 'preco_caixa']);
+  ws.addRow([7890000000009, 'Açaí 2L', 'Açaí', 4, 45.9, '']);
+  ws.addRow(['7890000000002', 'Cone', 'Cones', 12, '9,50', '']);
+  ws.addRow(['7890000000000', 'Picolé Exemplo (apague esta linha)', 'Picolés', 24, 4.5, 98]);
+  const xlsx = Buffer.from(await wb.xlsx.writeBuffer()).toString('base64');
+  const rx = await adm('POST', '/api/admin/produtos/importar', { xlsx });
+  assert.deepEqual([rx.data.created, rx.data.updated, rx.data.errors.length], [1, 1, 0]);
+  const acai = db.prepare("SELECT * FROM products WHERE barcode = '7890000000009'").get();
+  assert.equal(acai.unit_price_cents, 4590);
+  assert.equal(acai.box_price_cents, 4590 * 4);
+  assert.equal((await adm('POST', '/api/admin/produtos/importar', { xlsx: 'bm90IGEgemlw' })).status, 400);
 
   const backup = await adm('GET', '/api/admin/backup');
   assert.equal(backup.status, 200);

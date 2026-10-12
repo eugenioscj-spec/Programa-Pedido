@@ -4,10 +4,57 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const express = require('express');
-const { getSettings } = require('./db');
+const ExcelJS = require('exceljs');
+const { getSettings, storageIsPersistent } = require('./db');
 const { hashPassword, verifyPassword, createSessionStore, createLoginLimiter } = require('./auth');
 const { createInventory, BusinessError } = require('./inventory');
 const U = require('./util');
+
+const IMPORT_COLUMNS = [
+  ['codigo_barras', 'Código de barras da UNIDADE (EAN, o número embaixo do código no picolé/pote). Obrigatório se não tiver SKU.', 18],
+  ['codigo_caixa', 'Código de barras da CAIXA fechada (DUN-14). Opcional.', 18],
+  ['sku', 'Código interno/referência da franquia. Opcional.', 10],
+  ['nome', 'Nome do produto como o cliente vai ver. Obrigatório.', 34],
+  ['categoria', 'Ex.: Picolés, Potes, Cones, Açaí. Agrupa o catálogo.', 14],
+  ['unidades_caixa', 'Quantas unidades vêm em uma caixa fechada. Ex.: 24.', 14],
+  ['preco_unidade', 'Preço de venda da unidade para o cliente B2B. Ex.: 4,50', 13],
+  ['preco_caixa', 'Preço da caixa fechada. Se ficar vazio, usa unidade × quantidade.', 12],
+  ['estoque_minimo', 'Em UNIDADES. Abaixo disso o painel avisa "estoque baixo".', 14],
+  ['vende_unidade', 'sim ou nao: o cliente pode comprar unidade avulsa?', 13],
+  ['vende_caixa', 'sim ou nao: o cliente pode comprar caixa fechada?', 12],
+];
+
+// Lê a primeira aba de um .xlsx (enviado em base64) como lista de objetos { coluna: texto }.
+async function readXlsxRows(base64) {
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(Buffer.from(String(base64), 'base64'));
+  } catch {
+    throw new BusinessError('Não consegui abrir a planilha. Salve como "Pasta de Trabalho do Excel (.xlsx)" e tente de novo.');
+  }
+  const ws = wb.worksheets[0];
+  if (!ws) return [];
+  const text = (v) => {
+    if (v === null || v === undefined) return '';
+    if (typeof v === 'object') {
+      if (v.richText) return v.richText.map((t) => t.text).join('');
+      if (v.result !== undefined) return text(v.result);
+      if (v.text !== undefined) return String(v.text);
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+    }
+    return String(v).trim();
+  };
+  const header = [];
+  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => { header[col] = text(cell.value).toLowerCase(); });
+  const rows = [];
+  ws.eachRow((row, n) => {
+    if (n === 1) return;
+    const obj = {};
+    header.forEach((h, col) => { if (h) obj[h] = text(row.getCell(col).value); });
+    if (Object.values(obj).some((v) => v !== '')) rows.push(obj);
+  });
+  return rows;
+}
 
 function createApp(db) {
   const app = express();
@@ -17,7 +64,7 @@ function createApp(db) {
 
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '2mb' }));
+  app.use(express.json({ limit: '15mb' }));
   app.use((req, res, next) => {
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Referrer-Policy', 'same-origin');
@@ -78,6 +125,11 @@ function createApp(db) {
   };
 
   // ---------- público ----------
+  app.get('/api/health', (req, res) => {
+    db.prepare('SELECT 1').get();
+    res.json({ ok: true });
+  });
+
   app.get('/api/config', (req, res) => {
     const s = getSettings(db);
     res.json({
@@ -247,7 +299,7 @@ function createApp(db) {
       FROM orders WHERE status IN ('separado', 'entregue')
         AND strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')`).get();
     const stockValue = db.prepare('SELECT COALESCE(SUM(stock_units * unit_price_cents), 0) v, COALESCE(SUM(stock_units), 0) u FROM products').get();
-    res.json({ counts, lowStock, pendingCustomers, today, month, stockValue });
+    res.json({ counts, lowStock, pendingCustomers, today, month, stockValue, storage_ok: storageIsPersistent() });
   });
 
   // ---------- admin: produtos ----------
@@ -327,8 +379,8 @@ function createApp(db) {
 
   // Importação CSV: colunas aceitas (cabeçalho): codigo_barras, codigo_caixa, sku, nome, categoria,
   // unidades_caixa, preco_unidade, preco_caixa, estoque_minimo, vende_unidade, vende_caixa
-  admin.post('/produtos/importar', (req, res) => {
-    const rows = U.parseCsv(req.body?.csv || '');
+  admin.post('/produtos/importar', async (req, res) => {
+    const rows = req.body?.xlsx ? await readXlsxRows(req.body.xlsx) : U.parseCsv(req.body?.csv || '');
     if (rows.length === 0) throw new BusinessError('Arquivo vazio ou sem cabeçalho.');
     const pick = (r, ...keys) => {
       for (const k of keys) if (r[k] !== undefined && r[k] !== '') return r[k];
@@ -341,6 +393,7 @@ function createApp(db) {
       rows.forEach((r, idx) => {
         const line = idx + 2;
         try {
+          if (/apague esta linha/i.test(pick(r, 'nome') || '')) return;
           const barcode = U.cleanBarcode(pick(r, 'codigo_barras', 'ean', 'barcode', 'codigo'));
           const sku = U.cleanText(pick(r, 'sku', 'referencia'), 50);
           const existing = (barcode && db.prepare('SELECT * FROM products WHERE barcode = ?').get(barcode))
@@ -385,6 +438,40 @@ function createApp(db) {
     });
     run();
     res.json({ created, updated, errors });
+  });
+
+  admin.get('/produtos/modelo.xlsx', async (req, res) => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Produtos');
+    ws.columns = IMPORT_COLUMNS.map(([key, , width]) => ({ header: key, key, width }));
+    for (const key of ['codigo_barras', 'codigo_caixa', 'sku']) ws.getColumn(key).numFmt = '@';
+    ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD6195B' } };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+    const existing = db.prepare('SELECT * FROM products ORDER BY category, name').all();
+    const rows = existing.length ? existing : [{
+      barcode: '7890000000000', box_barcode: '17890000000007', sku: 'PIC01', name: 'Picolé Exemplo (apague esta linha)',
+      category: 'Picolés', units_per_box: 24, unit_price_cents: 450, box_price_cents: 9800, min_stock: 48, sell_unit: 1, sell_box: 1,
+    }];
+    for (const p of rows) {
+      ws.addRow({
+        codigo_barras: p.barcode || '', codigo_caixa: p.box_barcode || '', sku: p.sku || '', nome: p.name,
+        categoria: p.category, unidades_caixa: p.units_per_box, preco_unidade: p.unit_price_cents / 100,
+        preco_caixa: p.box_price_cents / 100, estoque_minimo: p.min_stock,
+        vende_unidade: p.sell_unit ? 'sim' : 'nao', vende_caixa: p.sell_box ? 'sim' : 'nao',
+      });
+    }
+    const help = wb.addWorksheet('Como preencher');
+    help.getColumn(1).width = 22;
+    help.getColumn(2).width = 90;
+    help.addRow(['Coluna', 'O que colocar']).font = { bold: true };
+    for (const [key, desc] of IMPORT_COLUMNS) help.addRow([key, desc]);
+    help.addRow([]);
+    help.addRow(['', 'Preencha a aba "Produtos" (uma linha por produto) e importe no painel em Produtos → Importar planilha.']);
+    help.addRow(['', 'Produtos com o mesmo código de barras são atualizados; os outros são criados. O estoque NÃO é alterado.']);
+    res.attachment('produtos-oggi.xlsx');
+    res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(await wb.xlsx.writeBuffer()));
   });
 
   admin.get('/produtos.csv', (req, res) => {
