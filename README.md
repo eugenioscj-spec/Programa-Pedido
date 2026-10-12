@@ -52,7 +52,15 @@ Pelo celular também funciona: digite o código ou o nome do produto no campo.
 
 ---
 
-## Instalar e rodar no seu computador
+## Testar de graça no seu computador (sem programar)
+
+1. Instale o **Node.js** (versão LTS) em https://nodejs.org. É só clicar em Avançar até o fim.
+2. Nesta página do GitHub, clique em **Code → Download ZIP** e extraia o arquivo (botão direito → *Extrair tudo*).
+3. Dentro da pasta, dê dois cliques em **`Testar no Windows.bat`** (ou **`Testar no Mac.command`**).
+
+Na primeira vez ele instala tudo e carrega produtos e um cliente **de exemplo**. Depois abre o painel no navegador e mostra o endereço para testar pelo celular, que precisa estar no mesmo Wi-Fi. Os dados de teste ficam na pasta `data` e não vão para o sistema publicado.
+
+## Instalar e rodar no seu computador (para desenvolvedores)
 
 Você precisa do [Node.js](https://nodejs.org) versão 20 ou superior.
 

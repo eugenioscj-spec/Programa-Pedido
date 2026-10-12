@@ -27,10 +27,17 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD) {
 
 const app = createApp(db);
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Oggi Pedidos B2B rodando em http://localhost:${PORT}`);
   console.log(`  Portal do cliente: http://localhost:${PORT}/`);
   console.log(`  Painel da loja:    http://localhost:${PORT}/admin`);
+});
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nA porta ${PORT} já está em uso. O sistema provavelmente já está aberto em outra janela.`);
+    process.exit(1);
+  }
+  throw err;
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
