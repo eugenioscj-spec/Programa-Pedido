@@ -3,8 +3,10 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const Database = require('better-sqlite3');
+const { runMigrations } = require('./migrations');
 
-const SCHEMA = `
+// Esquema da versão 1. As mudanças posteriores ficam em migrations.js.
+const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -140,16 +142,17 @@ function storageIsPersistent() {
   return !onRailway || !!(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DB_PATH);
 }
 
-function openDatabase(file) {
+function openDatabase(file, { log } = {}) {
   const target = file || defaultDbPath();
   if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true });
   const db = new Database(target);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
-  db.exec(SCHEMA);
+  db.exec(SCHEMA_V1);
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, v);
+  runMigrations(db, target, { log: log || (target === ':memory:' ? () => {} : console.log) });
   return db;
 }
 
@@ -158,4 +161,4 @@ function getSettings(db) {
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
 }
 
-module.exports = { openDatabase, getSettings, storageIsPersistent, DEFAULT_SETTINGS };
+module.exports = { openDatabase, getSettings, storageIsPersistent, DEFAULT_SETTINGS, SCHEMA_V1 };

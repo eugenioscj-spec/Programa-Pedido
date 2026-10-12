@@ -8,7 +8,7 @@ const { createApp } = require('../src/app');
 // Cliente HTTP mínimo que guarda cookies (um "navegador" por instância).
 function client(base) {
   const jar = {};
-  return async function call(method, path, body) {
+  const call = async function call(method, path, body) {
     const res = await fetch(base + path, {
       method,
       headers: {
@@ -27,6 +27,8 @@ function client(base) {
     try { data = JSON.parse(text); } catch { data = text; }
     return { status: res.status, data };
   };
+  call.cookie = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
+  return call;
 }
 
 test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', async (t) => {
@@ -54,7 +56,9 @@ test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', asy
 
   const lookup = await adm('GET', '/api/admin/produtos/buscar?codigo=17891111111118');
   assert.equal(lookup.data.matched, 'caixa');
-  await adm('POST', '/api/admin/estoque/movimentar', { type: 'entrada', lines: [{ product_id: pid, units: 60 }], document: 'NF 123' });
+  const semCusto = await adm('POST', '/api/admin/estoque/entrada', { lines: [{ product_id: pid, units: 60, cost: '' }], document: 'NF 123' });
+  assert.equal(semCusto.status, 400, 'entrada exige custo');
+  await adm('POST', '/api/admin/estoque/entrada', { lines: [{ product_id: pid, units: 60, cost: '60,00', cost_per: 'caixa' }], document: 'NF 123' });
 
   // cliente se cadastra e fica pendente
   const cad = await cli('POST', '/api/cliente/cadastro', {
@@ -97,6 +101,7 @@ test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', asy
 
   const movs = (await adm('GET', `/api/admin/estoque/movimentos?product_id=${pid}`)).data.movements;
   assert.deepEqual(movs.map((m) => m.type).sort(), ['entrada', 'saida_pedido', 'saida_pedido']);
+  assert.equal(movs.find((m) => m.type === 'entrada').value_cents, 18000, '60 un × R$ 60,00 a caixa de 20');
 
   const meus = (await cli('GET', '/api/pedidos')).data.orders;
   assert.equal(meus[0].status, 'entregue');
@@ -132,7 +137,7 @@ test('importação de produtos por CSV', async (t) => {
   const cone = db.prepare("SELECT * FROM products WHERE barcode = '7890000000002'").get();
   assert.equal(cone.unit_price_cents, 900);
   assert.equal(cone.name, 'Cone');
-  assert.equal(cone.box_price_cents, 9600);
+  assert.equal(cone.box_price_cents, 10800, 'preço da caixa calculado acompanha o preço da unidade');
 
   // planilha do Excel (.xlsx): baixa o modelo (já com os produtos), altera e reimporta
   const ExcelJS = require('exceljs');
@@ -156,4 +161,79 @@ test('importação de produtos por CSV', async (t) => {
   const backup = await adm('GET', '/api/admin/backup');
   assert.equal(backup.status, 200);
   assert.match(backup.data, /^SQLite format 3/);
+});
+
+test('painel v2: destinos, estorno, custo inicial, imagens, catálogo e relatórios', async (t) => {
+  const db = openDatabase(':memory:');
+  const server = createApp(db).listen(0);
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const adm = client(base);
+  await adm('POST', '/api/admin/setup', { name: 'Dono', email: 'd@l.com', senha: 'senha-forte-1' });
+
+  // catálogo Oggi 2026 com fotos
+  const cat = await adm('POST', '/api/admin/produtos/catalogo-oggi', {});
+  assert.deepEqual([cat.data.created, cat.data.images], [90, 90]);
+  const products = (await adm('GET', '/api/admin/produtos')).data.products;
+  const sensa = products.find((p) => p.name === 'Picolé Sensa Brigadeiro');
+  assert.deepEqual([sensa.units_per_box, sensa.unit_price_cents, sensa.box_price_cents, sensa.retail_price_cents], [20, 599, 11980, 599]);
+  assert.ok(sensa.image_url);
+  const img = await fetch(base + sensa.image_url);
+  assert.equal(img.headers.get('content-type'), 'image/webp');
+
+  // unidades por caixa por linha: o preço da caixa calculado acompanha
+  await adm('POST', '/api/admin/produtos/unidades-por-caixa', { category: 'Sensa', units_per_box: 24 });
+  const sensa2 = db.prepare('SELECT * FROM products WHERE id = ?').get(sensa.id);
+  assert.deepEqual([sensa2.units_per_box, sensa2.box_price_cents], [24, 599 * 24]);
+
+  // imagem própria
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const big = Buffer.concat([png, Buffer.alloc(200)]).toString('base64');
+  assert.equal((await adm('PUT', `/api/admin/produtos/${sensa.id}/imagem`, { mime: 'image/gif', data: big })).status, 400);
+  const up = await adm('PUT', `/api/admin/produtos/${sensa.id}/imagem`, { mime: 'image/png', data: big });
+  assert.notEqual(up.data.product.image_url, sensa.image_url);
+
+  // entrada, saídas com destino, estorno e limite de observação
+  const opts = (await adm('GET', '/api/admin/estoque/opcoes')).data;
+  assert.deepEqual(opts.locations.map((l) => l.name), ['Loja 1 - Centro', 'Loja 2']);
+  assert.equal(opts.default_supplier, 'Franqueadora Oggi');
+  await adm('POST', '/api/admin/estoque/entrada', { lines: [{ product_id: sensa.id, units: 48, cost: '144,00', cost_per: 'caixa' }], supplier: 'Franqueadora Oggi', document: 'NF 77' });
+  const semDestino = await adm('POST', '/api/admin/estoque/saida', { type: 'transferencia', lines: [{ product_id: sensa.id, units: 2 }] });
+  assert.equal(semDestino.status, 400);
+  const tr = await adm('POST', '/api/admin/estoque/saida', { type: 'transferencia', location_id: opts.locations[1].id, lines: [{ product_id: sensa.id, units: 2 }] });
+  assert.equal(tr.data.results[0].value_cents, -1200);
+  const muito = await adm('POST', '/api/admin/estoque/saida', { type: 'saida_sem_venda', subtype: 'consumo_interno', lines: [{ product_id: sensa.id, units: 40 }] });
+  assert.match(muito.data.error, /observação/);
+  const est = await adm('POST', `/api/admin/estoque/movimentos/${tr.data.results[0].id}/estornar`, { reason: 'Loja errada' });
+  assert.equal(est.data.result.value_cents, 1200);
+  const movs = (await adm('GET', `/api/admin/estoque/movimentos?product_id=${sensa.id}`)).data.movements;
+  assert.equal(movs.find((m) => m.type === 'transferencia').reversed_by, est.data.result.id);
+  assert.equal(movs.find((m) => m.type === 'transferencia').location_name, 'Loja 2');
+
+  // custo inicial de produto com saldo sem custo
+  const pote = products.find((p) => p.name === 'Pote Seleções Flocos');
+  await adm('POST', '/api/admin/estoque/inventario', { counts: [{ product_id: pote.id, counted_units: 8 }] });
+  assert.equal((await adm('GET', '/api/admin/estoque/sem-custo')).data.products.length, 1);
+  assert.equal((await adm('GET', '/api/admin/dashboard')).data.uncosted, 1);
+  await adm('POST', '/api/admin/estoque/custo-inicial', { product_id: pote.id, cost: '52,00', cost_per: 'caixa' });
+  assert.equal(db.prepare('SELECT stock_value_cents v FROM products WHERE id = ?').get(pote.id).v, 10400);
+
+  // relatórios (json, xlsx, csv)
+  const conc = (await adm('GET', '/api/admin/relatorios/conciliacao')).data;
+  assert.deepEqual([conc.report.check.units, conc.report.check.value], [0, 0]);
+  const pos = (await adm('GET', '/api/admin/relatorios/posicao')).data.report;
+  assert.equal(pos.sections[0].total.value, 48 * 600 + 10400);
+  const xlsx = await fetch(`${base}/api/admin/relatorios/vendas?formato=xlsx`, { headers: { Cookie: adm.cookie() } });
+  assert.match(xlsx.headers.get('content-type'), /spreadsheetml/);
+  const csv = await adm('GET', '/api/admin/relatorios/perdas?formato=csv');
+  assert.match(csv.data, /Perdas e divergências/);
+  assert.equal((await adm('GET', '/api/admin/relatorios/xyz')).status, 404);
+  assert.equal((await adm('GET', '/api/admin/relatorios/vendas?from=2026-09-10&to=2026-09-01')).status, 400);
+
+  // locais e motivos editáveis
+  await adm('POST', '/api/admin/locais', { name: 'Loja 3' });
+  await adm('POST', '/api/admin/motivos', { name: 'Queda de energia', requires_note: true });
+  const opts2 = (await adm('GET', '/api/admin/estoque/opcoes')).data;
+  assert.equal(opts2.locations.length, 3);
+  assert.ok(opts2.reasons.some((r) => r.name === 'Queda de energia' && r.requires_note));
 });

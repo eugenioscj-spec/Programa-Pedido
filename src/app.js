@@ -7,7 +7,11 @@ const express = require('express');
 const ExcelJS = require('exceljs');
 const { getSettings, storageIsPersistent } = require('./db');
 const { hashPassword, verifyPassword, createSessionStore, createLoginLimiter } = require('./auth');
-const { createInventory, BusinessError } = require('./inventory');
+const { createInventory, BusinessError, SUBTYPES, OUT_TYPES } = require('./inventory');
+const { createReports } = require('./reports');
+const { exportReport } = require('./export');
+const { loadOggiCatalog } = require('./catalog');
+const T = require('./time');
 const U = require('./util');
 
 const IMPORT_COLUMNS = [
@@ -19,6 +23,7 @@ const IMPORT_COLUMNS = [
   ['unidades_caixa', 'Quantas unidades vêm em uma caixa fechada. Ex.: 24.', 14],
   ['preco_unidade', 'Preço de venda da unidade para o cliente B2B. Ex.: 4,50', 13],
   ['preco_caixa', 'Preço da caixa fechada. Se ficar vazio, usa unidade × quantidade.', 12],
+  ['preco_varejo', 'Preço de venda ao consumidor no balcão (opcional). Usado para valorizar o que vai para as lojas.', 12],
   ['estoque_minimo', 'Em UNIDADES. Abaixo disso o painel avisa "estoque baixo".', 14],
   ['vende_unidade', 'sim ou nao: o cliente pode comprar unidade avulsa?', 13],
   ['vende_caixa', 'sim ou nao: o cliente pode comprar caixa fechada?', 12],
@@ -60,6 +65,7 @@ function createApp(db) {
   const app = express();
   const sessions = createSessionStore(db);
   const inv = createInventory(db);
+  const reports = createReports(db);
   const loginLimiter = createLoginLimiter();
 
   app.set('trust proxy', 1);
@@ -76,7 +82,8 @@ function createApp(db) {
     (SELECT COALESCE(SUM(oi.units_total), 0) FROM order_items oi JOIN orders o ON o.id = oi.order_id
       WHERE oi.product_id = p.id AND o.status IN ('novo', 'confirmado')) AS reserved_units`;
 
-  const withAvailability = (p) => ({ ...p, available_units: p.stock_units - p.reserved_units });
+  const withAvailability = (p) => ({ ...p, available_units: p.stock_units - p.reserved_units, image_url: imageUrl(p) });
+  const imageUrl = (p) => (p.image_updated_at ? `/img/produto/${p.id}?v=${encodeURIComponent(p.image_updated_at)}` : null);
 
   function requireAdmin(req, res, next) {
     const id = sessions.userId(req, 'admin');
@@ -205,6 +212,7 @@ function createApp(db) {
         box_price_cents: p.box_price_cents,
         sell_unit: !!p.sell_unit,
         sell_box: !!p.sell_box,
+        image_url: imageUrl(p),
         available_units: Math.max(0, p.available_units),
         show_quantity: showQty,
       }));
@@ -285,21 +293,17 @@ function createApp(db) {
     );
     const lowStock = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1`).all()
       .map(withAvailability)
-      .filter((p) => p.available_units <= p.min_stock)
+      .filter((p) => p.available_units <= p.min_stock && (p.min_stock > 0 || p.stock_units > 0 || p.has_cost))
       .sort((a, b) => a.available_units - b.available_units)
       .slice(0, 50);
     const pendingCustomers = db.prepare("SELECT COUNT(*) n FROM customers WHERE status = 'pendente'").get().n;
+    const [start, end] = T.utcRange(T.localDate(), T.localDate());
     const today = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity END), 0) AS entradas,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN -quantity END), 0) AS saidas
-      FROM stock_movements WHERE date(created_at, 'localtime') = date('now', 'localtime')`).get();
-    const month = db.prepare(`
-      SELECT COUNT(*) AS pedidos, COALESCE(SUM(total_cents), 0) AS total_cents
-      FROM orders WHERE status IN ('separado', 'entregue')
-        AND strftime('%Y-%m', created_at, 'localtime') = strftime('%Y-%m', 'now', 'localtime')`).get();
-    const stockValue = db.prepare('SELECT COALESCE(SUM(stock_units * unit_price_cents), 0) v, COALESCE(SUM(stock_units), 0) u FROM products').get();
-    res.json({ counts, lowStock, pendingCustomers, today, month, stockValue, storage_ok: storageIsPersistent() });
+      FROM stock_movements WHERE created_at >= ? AND created_at < ?`).get(start, end);
+    res.json({ counts, lowStock, pendingCustomers, today, ...reports.dashboard(), storage_ok: storageIsPersistent() });
   });
 
   // ---------- admin: produtos ----------
@@ -309,8 +313,13 @@ function createApp(db) {
     const upb = Number(b.units_per_box ?? existing.units_per_box ?? 1);
     if (!Number.isInteger(upb) || upb < 1) throw new BusinessError('Unidades por caixa deve ser um número inteiro maior que zero.');
     const unitPrice = b.unit_price !== undefined ? U.toCents(b.unit_price) : (existing.unit_price_cents ?? 0);
-    const boxPrice = b.box_price !== undefined ? U.toCents(b.box_price) : (existing.box_price_cents ?? 0);
+    // Preço da caixa vazio = unidade × quantidade. Se era calculado assim, continua acompanhando.
+    const boxWasDerived = existing.box_price_cents === (existing.unit_price_cents ?? 0) * (existing.units_per_box ?? 1);
+    const boxPrice = b.box_price !== undefined ? U.toCents(b.box_price) : (boxWasDerived ? 0 : (existing.box_price_cents ?? 0));
+    const hasRetail = b.retail_price !== undefined && b.retail_price !== null && String(b.retail_price).trim() !== '';
+    const retailPrice = b.retail_price !== undefined ? (hasRetail ? U.toCents(b.retail_price) : null) : (existing.retail_price_cents ?? null);
     if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(boxPrice) || boxPrice < 0) throw new BusinessError('Preço inválido.');
+    if (retailPrice !== null && (!Number.isFinite(retailPrice) || retailPrice < 0)) throw new BusinessError('Preço de varejo inválido.');
     const minStock = Number(b.min_stock ?? existing.min_stock ?? 0);
     if (!Number.isInteger(minStock) || minStock < 0) throw new BusinessError('Estoque mínimo inválido.');
     const bool = (v, d) => (v === undefined ? d : v === true || v === 1 || v === '1' || v === 'sim' || v === 'true' ? 1 : 0);
@@ -323,6 +332,7 @@ function createApp(db) {
       units_per_box: upb,
       unit_price_cents: unitPrice,
       box_price_cents: boxPrice || unitPrice * upb,
+      retail_price_cents: retailPrice,
       sell_unit: bool(b.sell_unit, existing.sell_unit ?? 1),
       sell_box: bool(b.sell_box, existing.sell_box ?? 1),
       min_stock: minStock,
@@ -340,6 +350,23 @@ function createApp(db) {
     return p;
   }
 
+  function saveProduct(p, id = null) {
+    if (id) {
+      db.prepare(`
+        UPDATE products SET sku=@sku, name=@name, category=@category, barcode=@barcode, box_barcode=@box_barcode,
+          units_per_box=@units_per_box, unit_price_cents=@unit_price_cents, box_price_cents=@box_price_cents,
+          retail_price_cents=@retail_price_cents, sell_unit=@sell_unit, sell_box=@sell_box, min_stock=@min_stock,
+          active=@active, description=@description, updated_at=datetime('now')
+        WHERE id=@id`).run({ ...p, id });
+      return id;
+    }
+    return Number(db.prepare(`
+      INSERT INTO products (sku, name, category, barcode, box_barcode, units_per_box, unit_price_cents, box_price_cents,
+        retail_price_cents, sell_unit, sell_box, min_stock, active, description)
+      VALUES (@sku, @name, @category, @barcode, @box_barcode, @units_per_box, @unit_price_cents, @box_price_cents,
+        @retail_price_cents, @sell_unit, @sell_box, @min_stock, @active, @description)`).run(p).lastInsertRowid);
+  }
+
   admin.get('/produtos', (req, res) => {
     const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p ORDER BY p.active DESC, p.category, p.name`).all().map(withAvailability);
     res.json({ products });
@@ -354,26 +381,15 @@ function createApp(db) {
   });
 
   admin.post('/produtos', (req, res) => {
-    const p = readProduct(req.body || {});
-    const info = db.prepare(`
-      INSERT INTO products (sku, name, category, barcode, box_barcode, units_per_box, unit_price_cents, box_price_cents,
-        sell_unit, sell_box, min_stock, active, description)
-      VALUES (@sku, @name, @category, @barcode, @box_barcode, @units_per_box, @unit_price_cents, @box_price_cents,
-        @sell_unit, @sell_box, @min_stock, @active, @description)`).run(p);
-    res.status(201).json({ product: db.prepare('SELECT * FROM products WHERE id = ?').get(info.lastInsertRowid) });
+    const id = saveProduct(readProduct(req.body || {}));
+    res.status(201).json({ product: db.prepare('SELECT * FROM products WHERE id = ?').get(id) });
   });
 
   admin.put('/produtos/:id', (req, res) => {
     const id = idParam(req);
     const existing = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
     if (!existing) throw new BusinessError('Produto não encontrado.', 404);
-    const p = readProduct(req.body || {}, existing);
-    db.prepare(`
-      UPDATE products SET sku=@sku, name=@name, category=@category, barcode=@barcode, box_barcode=@box_barcode,
-        units_per_box=@units_per_box, unit_price_cents=@unit_price_cents, box_price_cents=@box_price_cents,
-        sell_unit=@sell_unit, sell_box=@sell_box, min_stock=@min_stock, active=@active, description=@description,
-        updated_at=datetime('now')
-      WHERE id=@id`).run({ ...p, id });
+    saveProduct(readProduct(req.body || {}, existing), id);
     res.json({ product: db.prepare('SELECT * FROM products WHERE id = ?').get(id) });
   });
 
@@ -407,6 +423,7 @@ function createApp(db) {
             units_per_box: pick(r, 'unidades_caixa', 'qtd_caixa', 'unidades_por_caixa'),
             unit_price: pick(r, 'preco_unidade', 'preco'),
             box_price: pick(r, 'preco_caixa'),
+            retail_price: pick(r, 'preco_varejo'),
             min_stock: pick(r, 'estoque_minimo'),
             sell_unit: pick(r, 'vende_unidade'),
             sell_box: pick(r, 'vende_caixa'),
@@ -415,20 +432,10 @@ function createApp(db) {
           if (data.units_per_box !== undefined) data.units_per_box = Number(data.units_per_box);
           if (data.min_stock !== undefined) data.min_stock = Number(data.min_stock);
           if (existing) {
-            const p = readProduct(data, existing);
-            db.prepare(`
-              UPDATE products SET sku=@sku, name=@name, category=@category, barcode=@barcode, box_barcode=@box_barcode,
-                units_per_box=@units_per_box, unit_price_cents=@unit_price_cents, box_price_cents=@box_price_cents,
-                sell_unit=@sell_unit, sell_box=@sell_box, min_stock=@min_stock, updated_at=datetime('now')
-              WHERE id=@id`).run({ ...p, id: existing.id });
+            saveProduct(readProduct(data, existing), existing.id);
             updated++;
           } else {
-            const p = readProduct(data);
-            db.prepare(`
-              INSERT INTO products (sku, name, category, barcode, box_barcode, units_per_box, unit_price_cents, box_price_cents,
-                sell_unit, sell_box, min_stock, active, description)
-              VALUES (@sku, @name, @category, @barcode, @box_barcode, @units_per_box, @unit_price_cents, @box_price_cents,
-                @sell_unit, @sell_box, @min_stock, @active, @description)`).run(p);
+            saveProduct(readProduct(data));
             created++;
           }
         } catch (e) {
@@ -457,7 +464,8 @@ function createApp(db) {
       ws.addRow({
         codigo_barras: p.barcode || '', codigo_caixa: p.box_barcode || '', sku: p.sku || '', nome: p.name,
         categoria: p.category, unidades_caixa: p.units_per_box, preco_unidade: p.unit_price_cents / 100,
-        preco_caixa: p.box_price_cents / 100, estoque_minimo: p.min_stock,
+        preco_caixa: p.box_price_cents / 100, preco_varejo: p.retail_price_cents === null || p.retail_price_cents === undefined ? '' : p.retail_price_cents / 100,
+        estoque_minimo: p.min_stock,
         vende_unidade: p.sell_unit ? 'sim' : 'nao', vende_caixa: p.sell_box ? 'sim' : 'nao',
       });
     }
@@ -485,26 +493,109 @@ function createApp(db) {
       { label: 'unidades_caixa', value: 'units_per_box' },
       { label: 'preco_unidade', value: (r) => U.centsToBr(r.unit_price_cents) },
       { label: 'preco_caixa', value: (r) => U.centsToBr(r.box_price_cents) },
+      { label: 'preco_varejo', value: (r) => (r.retail_price_cents === null ? '' : U.centsToBr(r.retail_price_cents)) },
       { label: 'estoque_minimo', value: 'min_stock' },
       { label: 'vende_unidade', value: (r) => (r.sell_unit ? 'sim' : 'nao') },
       { label: 'vende_caixa', value: (r) => (r.sell_box ? 'sim' : 'nao') },
       { label: 'estoque_fisico_un', value: 'stock_units' },
       { label: 'reservado_un', value: 'reserved_units' },
       { label: 'disponivel_un', value: 'available_units' },
+      { label: 'custo_medio_un', value: (r) => (r.has_cost && r.stock_units ? U.centsToBr(r.stock_value_cents / r.stock_units) : '') },
+      { label: 'valor_a_custo', value: (r) => (r.has_cost ? U.centsToBr(r.stock_value_cents) : 'sem custo') },
       { label: 'ativo', value: (r) => (r.active ? 'sim' : 'nao') },
     ]);
-    res.type('text/csv').attachment(`estoque-${new Date().toISOString().slice(0, 10)}.csv`).send(csv);
+    res.type('text/csv').attachment(`estoque-${T.localDate()}.csv`).send(csv);
+  });
+
+  // ---------- admin: imagens e catálogo ----------
+  const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+  admin.put('/produtos/:id/imagem', (req, res) => {
+    const id = idParam(req);
+    if (!db.prepare('SELECT 1 FROM products WHERE id = ?').get(id)) throw new BusinessError('Produto não encontrado.', 404);
+    const mime = String(req.body?.mime || '');
+    if (!IMAGE_TYPES.includes(mime)) throw new BusinessError('Use uma imagem JPG, PNG ou WebP.');
+    const data = Buffer.from(String(req.body?.data || ''), 'base64');
+    if (data.length < 100) throw new BusinessError('Imagem vazia.');
+    if (data.length > 2 * 1024 * 1024) throw new BusinessError('Imagem muito grande (máx. 2 MB).');
+    db.transaction(() => {
+      db.prepare(`INSERT INTO product_images (product_id, mime, data, updated_at) VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(product_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at`).run(id, mime, data);
+      db.prepare("UPDATE products SET image_updated_at = strftime('%Y%m%d%H%M%f', 'now') WHERE id = ?").run(id);
+    })();
+    res.json({ product: withAvailability(db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.id = ?`).get(id)) });
+  });
+
+  admin.delete('/produtos/:id/imagem', (req, res) => {
+    const id = idParam(req);
+    db.prepare('DELETE FROM product_images WHERE product_id = ?').run(id);
+    db.prepare('UPDATE products SET image_updated_at = NULL WHERE id = ?').run(id);
+    res.json({ ok: true });
+  });
+
+  admin.post('/produtos/catalogo-oggi', (req, res) => {
+    res.json(loadOggiCatalog(db, { withImages: req.body?.images !== false }));
+  });
+
+  // Unidades por caixa de todos os produtos de uma categoria (o preço da caixa calculado acompanha).
+  admin.post('/produtos/unidades-por-caixa', (req, res) => {
+    const category = String(req.body?.category || '');
+    const upb = Number(req.body?.units_per_box);
+    if (!Number.isInteger(upb) || upb < 1) throw new BusinessError('Unidades por caixa inválidas.');
+    const products = db.prepare('SELECT * FROM products WHERE category = ?').all(category);
+    if (!products.length) throw new BusinessError('Categoria sem produtos.');
+    db.transaction(() => { for (const p of products) saveProduct(readProduct({ units_per_box: upb }, p), p.id); })();
+    res.json({ updated: products.length });
   });
 
   // ---------- admin: estoque ----------
-  admin.post('/estoque/movimentar', (req, res) => {
+  admin.get('/estoque/opcoes', (req, res) => {
+    const s = getSettings(db);
+    res.json({
+      locations: db.prepare("SELECT * FROM locations WHERE kind = 'loja' AND active = 1 ORDER BY name").all(),
+      reasons: db.prepare('SELECT * FROM loss_reasons WHERE active = 1 ORDER BY sort, name').all(),
+      subtypes: Object.entries(SUBTYPES).map(([value, label]) => ({ value, label })),
+      customers: db.prepare("SELECT id, razao_social, nome_fantasia FROM customers WHERE status <> 'bloqueado' ORDER BY COALESCE(nome_fantasia, razao_social)").all(),
+      note_threshold_cents: Number(s.out_note_threshold_cents) || 0,
+      default_supplier: s.default_supplier || '',
+    });
+  });
+
+  admin.post('/estoque/entrada', (req, res) => {
     const b = req.body || {};
-    const results = inv.manualMovement({
+    if (!Array.isArray(b.lines)) throw new BusinessError('Nenhum item informado.');
+    const lines = b.lines.map((l) => {
+      const cost = U.toCents(l.cost);
+      if (l.cost === undefined || l.cost === null || String(l.cost).trim() === '' || !Number.isFinite(cost)) {
+        throw new BusinessError('Informe o custo de todos os itens (pode ser 0 em bonificação, com observação).');
+      }
+      const opening = l.opening_cost !== undefined && String(l.opening_cost).trim() !== '' ? U.toCents(l.opening_cost) : null;
+      if (opening !== null && !Number.isFinite(opening)) throw new BusinessError('Custo inicial inválido.');
+      return { product_id: l.product_id, units: l.units, cost_cents: cost, cost_per: l.cost_per, opening_cost_cents: opening, opening_cost_per: l.opening_cost_per };
+    });
+    const results = inv.receive({
+      lines,
+      document: U.cleanText(b.document, 100),
+      supplier: U.cleanText(b.supplier, 100),
+      note: U.cleanText(b.note, 300),
+      user: req.admin.name,
+    });
+    res.json({ results });
+  });
+
+  admin.post('/estoque/saida', (req, res) => {
+    const b = req.body || {};
+    if (!OUT_TYPES.includes(b.type)) throw new BusinessError('Escolha o destino da saída.');
+    const results = inv.dispatch({
       type: b.type,
       lines: b.lines,
+      locationId: b.location_id ? Number(b.location_id) : null,
+      reasonId: b.reason_id ? Number(b.reason_id) : null,
+      subtype: b.subtype || null,
+      customerId: b.customer_id ? Number(b.customer_id) : null,
       document: U.cleanText(b.document, 100),
       note: U.cleanText(b.note, 300),
       user: req.admin.name,
+      noteThresholdCents: Number(getSettings(db).out_note_threshold_cents) || 0,
     });
     res.json({ results });
   });
@@ -515,37 +606,110 @@ function createApp(db) {
     res.json({ results: inv.inventoryCount({ counts: b.counts, note: U.cleanText(b.note, 300), user: req.admin.name }) });
   });
 
+  admin.get('/estoque/sem-custo', (req, res) => {
+    const products = db.prepare(`
+      SELECT p.id, p.name, p.category, p.units_per_box, p.stock_units, p.barcode,
+        (SELECT value_cents * 1.0 / quantity FROM stock_movements WHERE product_id = p.id AND type = 'entrada' AND quantity > 0
+          AND value_cents IS NOT NULL ORDER BY id DESC LIMIT 1) AS last_entry_unit_cost
+      FROM products p WHERE p.stock_units > 0 AND p.has_cost = 0 ORDER BY p.category, p.name`).all();
+    res.json({ products });
+  });
+
+  admin.post('/estoque/custo-inicial', (req, res) => {
+    const b = req.body || {};
+    const cost = U.toCents(b.cost);
+    if (b.cost === undefined || String(b.cost).trim() === '' || !Number.isFinite(cost)) throw new BusinessError('Informe o custo.');
+    const r = inv.openingCost({ productId: Number(b.product_id), costCents: cost, costPer: b.cost_per, note: U.cleanText(b.note, 300), user: req.admin.name });
+    res.json({ result: r });
+  });
+
+  admin.post('/estoque/movimentos/:id/estornar', (req, res) => {
+    const r = inv.reverse({ movementId: idParam(req), reason: U.cleanText(req.body?.reason, 300), user: req.admin.name });
+    res.json({ result: r });
+  });
+
+  const MOV_LABELS = {
+    entrada: 'Entrada', saida_pedido: 'Venda B2B', transferencia: 'Transferência', perda: 'Perda',
+    saida_sem_venda: 'Saída sem venda', sobra_inventario: 'Sobra de inventário', divergencia_inventario: 'Divergência de inventário',
+    abertura_custo: 'Custo inicial', estorno: 'Estorno',
+  };
+
   function movementQuery(qs) {
     const where = [];
     const params = [];
     if (qs.product_id) { where.push('m.product_id = ?'); params.push(Number(qs.product_id)); }
     if (qs.type) { where.push('m.type = ?'); params.push(String(qs.type)); }
-    if (qs.from) { where.push("date(m.created_at, 'localtime') >= ?"); params.push(String(qs.from)); }
-    if (qs.to) { where.push("date(m.created_at, 'localtime') <= ?"); params.push(String(qs.to)); }
+    if (qs.from && T.isDate(String(qs.from))) { where.push('m.created_at >= ?'); params.push(T.utcStartOfLocalDay(String(qs.from))); }
+    if (qs.to && T.isDate(String(qs.to))) { where.push('m.created_at < ?'); params.push(T.utcStartOfLocalDay(T.addDays(String(qs.to), 1))); }
     const sql = `
-      SELECT m.*, datetime(m.created_at, 'localtime') AS created_local, p.name AS product_name, p.barcode, p.units_per_box
+      SELECT m.*, ${T.sqlLocalDateTime('m.created_at')} AS created_local, p.name AS product_name, p.barcode, p.units_per_box,
+        l.name AS location_name, r.name AS reason_name, COALESCE(c.nome_fantasia, c.razao_social) AS customer_name,
+        o.type AS reverses_type, (SELECT x.id FROM stock_movements x WHERE x.reverses_movement_id = m.id) AS reversed_by
       FROM stock_movements m JOIN products p ON p.id = m.product_id
+      LEFT JOIN locations l ON l.id = m.location_id
+      LEFT JOIN loss_reasons r ON r.id = m.reason_id
+      LEFT JOIN customers c ON c.id = m.customer_id
+      LEFT JOIN stock_movements o ON o.id = m.reverses_movement_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY m.id DESC LIMIT ${Math.min(Number(qs.limit) || 500, 5000)}`;
-    return db.prepare(sql).all(...params);
+    return db.prepare(sql).all(...params).map((m) => ({ ...m, subtype_label: m.subtype ? SUBTYPES[m.subtype] || m.subtype : null }));
   }
 
   admin.get('/estoque/movimentos', (req, res) => res.json({ movements: movementQuery(req.query) }));
 
   admin.get('/estoque/movimentos.csv', (req, res) => {
     const csv = U.toCsv(movementQuery({ ...req.query, limit: 5000 }), [
-      { label: 'data', value: 'created_local' },
-      { label: 'tipo', value: 'type' },
+      { label: 'id', value: 'id' },
+      { label: 'data (Cuiabá)', value: 'created_local' },
+      { label: 'tipo', value: (r) => MOV_LABELS[r.type] || r.type },
+      { label: 'estorno de', value: 'reverses_movement_id' },
       { label: 'produto', value: 'product_name' },
       { label: 'codigo_barras', value: 'barcode' },
       { label: 'quantidade_un', value: 'quantity' },
       { label: 'saldo_apos_un', value: 'balance_after' },
+      { label: 'custo_unitario', value: (r) => (r.unit_cost_cents === null ? '' : U.centsToBr(r.unit_cost_cents)) },
+      { label: 'valor', value: (r) => (r.value_cents === null ? 'sem custo' : U.centsToBr(r.value_cents)) },
+      { label: 'valor_apos', value: (r) => (r.value_after_cents === null ? '' : U.centsToBr(r.value_after_cents)) },
+      { label: 'receita', value: (r) => (r.revenue_cents === null ? '' : U.centsToBr(r.revenue_cents)) },
+      { label: 'destino/motivo', value: (r) => r.location_name || r.reason_name || r.subtype_label || '' },
+      { label: 'cliente', value: 'customer_name' },
       { label: 'pedido', value: 'order_id' },
+      { label: 'fornecedor', value: 'supplier' },
       { label: 'documento', value: 'document' },
       { label: 'observacao', value: 'note' },
       { label: 'usuario', value: 'created_by' },
     ]);
     res.type('text/csv').attachment('movimentacoes.csv').send(csv);
+  });
+
+  // ---------- admin: relatórios ----------
+  const REPORTS = {
+    posicao: (q) => reports.position(q.date),
+    conciliacao: (q) => reports.reconciliation(q.from, q.to),
+    vendas: (q) => reports.sales(q.from, q.to),
+    perdas: (q) => reports.losses(q.from, q.to),
+    transferencias: (q) => reports.transfers(q.from, q.to),
+  };
+  function reportParams(qs) {
+    const today = T.localDate();
+    const [mFrom] = T.monthBounds(T.localMonth());
+    const date = T.isDate(String(qs.date || '')) ? String(qs.date) : today;
+    const from = T.isDate(String(qs.from || '')) ? String(qs.from) : mFrom;
+    const to = T.isDate(String(qs.to || '')) ? String(qs.to) : today;
+    if (from > to) throw new BusinessError('A data inicial é depois da final.');
+    return { date, from, to };
+  }
+  admin.get('/relatorios/:tipo', async (req, res) => {
+    const fn = REPORTS[req.params.tipo];
+    if (!fn) throw new BusinessError('Relatório não encontrado.', 404);
+    const params = reportParams(req.query);
+    const report = fn(params);
+    const format = req.query.formato;
+    if (format === 'xlsx' || format === 'csv') {
+      const { buffer, filename, type } = await exportReport(report, format, `${req.params.tipo}-${req.params.tipo === 'posicao' ? params.date : `${params.from}_${params.to}`}`);
+      return res.type(type).attachment(filename).send(buffer);
+    }
+    res.json({ report, params });
   });
 
   // ---------- admin: pedidos ----------
@@ -630,7 +794,8 @@ function createApp(db) {
   });
 
   // ---------- admin: configurações e usuários ----------
-  const EDITABLE_SETTINGS = ['store_name', 'store_subtitle', 'whatsapp', 'min_order_cents', 'auto_approve_customers', 'show_stock_quantity', 'order_notice'];
+  const EDITABLE_SETTINGS = ['store_name', 'store_subtitle', 'whatsapp', 'min_order_cents', 'auto_approve_customers', 'show_stock_quantity',
+    'order_notice', 'out_note_threshold_cents', 'default_supplier'];
 
   admin.get('/config', (req, res) => res.json({ settings: getSettings(db) }));
 
@@ -641,6 +806,10 @@ function createApp(db) {
       const cents = U.toCents(b.min_order);
       b.min_order_cents = Number.isFinite(cents) && cents > 0 ? cents : 0;
     }
+    if (b.out_note_threshold !== undefined) {
+      const cents = U.toCents(b.out_note_threshold);
+      b.out_note_threshold_cents = Number.isFinite(cents) && cents > 0 ? cents : 0;
+    }
     for (const key of EDITABLE_SETTINGS) {
       if (b[key] === undefined) continue;
       let value = String(b[key]).slice(0, 500);
@@ -649,6 +818,46 @@ function createApp(db) {
       upsert.run(key, value);
     }
     res.json({ settings: getSettings(db) });
+  });
+
+  // Locais (lojas) e motivos de perda. Não são apagados: desative para esconder.
+  admin.get('/locais', (req, res) => res.json({ locations: db.prepare('SELECT * FROM locations ORDER BY kind, name').all() }));
+  admin.post('/locais', (req, res) => {
+    const name = U.cleanText(req.body?.name, 80);
+    if (!name) throw new BusinessError('Informe o nome da loja.');
+    db.prepare("INSERT INTO locations (name, kind, description) VALUES (?, 'loja', ?)").run(name, U.cleanText(req.body?.description, 200));
+    res.status(201).json({ ok: true });
+  });
+  admin.put('/locais/:id', (req, res) => {
+    const id = idParam(req);
+    const l = db.prepare('SELECT * FROM locations WHERE id = ?').get(id);
+    if (!l) throw new BusinessError('Local não encontrado.', 404);
+    if (l.kind === 'camara' && req.body?.active === false) throw new BusinessError('A câmara não pode ser desativada.');
+    db.prepare('UPDATE locations SET name = ?, description = ?, active = ? WHERE id = ?').run(
+      U.cleanText(req.body?.name, 80) || l.name,
+      req.body?.description !== undefined ? U.cleanText(req.body.description, 200) : l.description,
+      req.body?.active === undefined ? l.active : (req.body.active ? 1 : 0), id,
+    );
+    res.json({ ok: true });
+  });
+  admin.get('/motivos', (req, res) => res.json({ reasons: db.prepare('SELECT * FROM loss_reasons ORDER BY active DESC, sort, name').all() }));
+  admin.post('/motivos', (req, res) => {
+    const name = U.cleanText(req.body?.name, 80);
+    if (!name) throw new BusinessError('Informe o motivo.');
+    const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 s FROM loss_reasons WHERE sort < 99').get().s;
+    db.prepare('INSERT INTO loss_reasons (name, requires_note, sort) VALUES (?, ?, ?)').run(name, req.body?.requires_note ? 1 : 0, sort);
+    res.status(201).json({ ok: true });
+  });
+  admin.put('/motivos/:id', (req, res) => {
+    const id = idParam(req);
+    const r = db.prepare('SELECT * FROM loss_reasons WHERE id = ?').get(id);
+    if (!r) throw new BusinessError('Motivo não encontrado.', 404);
+    db.prepare('UPDATE loss_reasons SET name = ?, requires_note = ?, active = ? WHERE id = ?').run(
+      U.cleanText(req.body?.name, 80) || r.name,
+      req.body?.requires_note === undefined ? r.requires_note : (req.body.requires_note ? 1 : 0),
+      req.body?.active === undefined ? r.active : (req.body.active ? 1 : 0), id,
+    );
+    res.json({ ok: true });
   });
 
   admin.get('/usuarios', (req, res) => {
@@ -678,6 +887,14 @@ function createApp(db) {
     if (!nova || String(nova).length < 8) throw new BusinessError('A nova senha precisa ter ao menos 8 caracteres.');
     db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(nova), a.id);
     res.json({ ok: true });
+  });
+
+  // ---------- imagens dos produtos (públicas; o ?v= muda quando a foto muda) ----------
+  app.get('/img/produto/:id', (req, res) => {
+    const img = db.prepare('SELECT mime, data FROM product_images WHERE product_id = ?').get(Number(req.params.id));
+    if (!img) return res.status(404).end();
+    res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.type(img.mime).send(img.data);
   });
 
   // ---------- arquivos estáticos ----------

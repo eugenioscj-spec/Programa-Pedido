@@ -1,0 +1,726 @@
+{
+ "name": "Catálogo Oggi 2026",
+ "source": "Catálogo de Produtos Oggi Sorvetes 2026 (PDF)",
+ "products": [
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 3499,
+   "upb": 4,
+   "name": "Pote 1,5L Doce Vingança do Vecna",
+   "desc": "Chocolate maltado",
+   "slug": "netflix-pote-vecna"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 3499,
+   "upb": 4,
+   "name": "Pote 1,5L Misterioso Choco-Cereja",
+   "desc": "Chocolate com cereja",
+   "slug": "netflix-pote-choco-cereja"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 3499,
+   "upb": 4,
+   "name": "Pote 1,5L Extravagância da Onze",
+   "desc": "Chocolate e leite condensado com biscoito e caramelo",
+   "slug": "netflix-pote-onze"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 399,
+   "upb": 39,
+   "name": "Picolé Chocolate do Mundo Invertido",
+   "desc": "Chocolate recheado com frutas vermelhas",
+   "slug": "netflix-mundo-invertido"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 899,
+   "upb": 24,
+   "name": "Picolé Demogorgon Freeze",
+   "desc": "Chocolate com cobertura de chocolate branco",
+   "slug": "netflix-demogorgon"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 599,
+   "upb": 39,
+   "name": "Picolé Top Hit de Hawkins",
+   "desc": "Baunilha com recheio de chocolate e cobertura de chocolate branco",
+   "slug": "netflix-top-hit"
+  },
+  {
+   "category": "Netflix (edição limitada)",
+   "price": 1099,
+   "upb": 12,
+   "name": "Mini Bombom Stranger Bites",
+   "desc": "Bombom de açaí com cobertura de chocolate branco",
+   "slug": "netflix-stranger-bites"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Leite com Cacau",
+   "desc": "Embalagem Mickey",
+   "slug": "disney-leite-cacau"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Morango",
+   "desc": "Embalagem Minnie",
+   "slug": "disney-morango"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Caramelo",
+   "desc": "Embalagem Woody",
+   "slug": "disney-caramelo"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Leite com Morango e Baunilha",
+   "desc": "Embalagem Jessie",
+   "slug": "disney-morango-baunilha"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Uva Roxa",
+   "desc": "Embalagem Ariel",
+   "slug": "disney-uva"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Baunilha",
+   "desc": "Embalagem Linguado",
+   "slug": "disney-baunilha"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Iogurte de Morango",
+   "desc": "Embalagem Homem-Aranha",
+   "slug": "disney-iogurte-morango"
+  },
+  {
+   "category": "Disney",
+   "price": 399,
+   "upb": 24,
+   "name": "Picolé Disney Iogurte de Frutas Vermelhas",
+   "desc": "Embalagem Spider-Gwen",
+   "slug": "disney-iogurte-frutas-vermelhas"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 150,
+   "upb": 39,
+   "name": "Picolé Festa Frutas Vermelhas",
+   "desc": "Base água",
+   "slug": "festa-frutas-vermelhas"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 150,
+   "upb": 39,
+   "name": "Picolé Festa Melancia",
+   "desc": "Base água",
+   "slug": "festa-melancia"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 150,
+   "upb": 39,
+   "name": "Picolé Festa Groselha",
+   "desc": "Base água",
+   "slug": "festa-groselha"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 175,
+   "upb": 39,
+   "name": "Picolé Festa Achocolatado",
+   "desc": "Base leite",
+   "slug": "festa-achocolatado"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 175,
+   "upb": 39,
+   "name": "Picolé Festa Iogurte",
+   "desc": "Base leite",
+   "slug": "festa-iogurte"
+  },
+  {
+   "category": "Festa no Palito",
+   "price": 175,
+   "upb": 39,
+   "name": "Picolé Festa Leite Condensado",
+   "desc": "Base leite",
+   "slug": "festa-leite-condensado"
+  },
+  {
+   "category": "Hello Kitty e Amigos",
+   "price": 175,
+   "upb": 39,
+   "name": "Picolé Hello Kitty Tutti-Frutti",
+   "desc": "",
+   "slug": "hk-tutti-frutti"
+  },
+  {
+   "category": "Hello Kitty e Amigos",
+   "price": 175,
+   "upb": 39,
+   "name": "Picolé Hello Kitty Pinta-Língua",
+   "desc": "",
+   "slug": "hk-pinta-lingua"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Abacaxi",
+   "desc": "",
+   "slug": "frutos-abacaxi"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Açaí",
+   "desc": "",
+   "slug": "frutos-acai"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Goiaba",
+   "desc": "",
+   "slug": "frutos-goiaba"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Limão",
+   "desc": "",
+   "slug": "frutos-limao"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Manga",
+   "desc": "",
+   "slug": "frutos-manga"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Morango",
+   "desc": "",
+   "slug": "frutos-morango"
+  },
+  {
+   "category": "Frutos",
+   "price": 225,
+   "upb": 39,
+   "name": "Picolé Frutos Uva",
+   "desc": "",
+   "slug": "frutos-uva"
+  },
+  {
+   "category": "Fazenda",
+   "price": 250,
+   "upb": 39,
+   "name": "Picolé Fazenda Amendoim",
+   "desc": "",
+   "slug": "fazenda-amendoim"
+  },
+  {
+   "category": "Fazenda",
+   "price": 250,
+   "upb": 39,
+   "name": "Picolé Fazenda Coco",
+   "desc": "",
+   "slug": "fazenda-coco"
+  },
+  {
+   "category": "Fazenda",
+   "price": 250,
+   "upb": 39,
+   "name": "Picolé Fazenda Coco Queimado",
+   "desc": "",
+   "slug": "fazenda-coco-queimado"
+  },
+  {
+   "category": "Fazenda",
+   "price": 250,
+   "upb": 39,
+   "name": "Picolé Fazenda Doce de Leite",
+   "desc": "",
+   "slug": "fazenda-doce-de-leite"
+  },
+  {
+   "category": "Fazenda",
+   "price": 250,
+   "upb": 39,
+   "name": "Picolé Fazenda Milho Verde",
+   "desc": "",
+   "slug": "fazenda-milho-verde"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Abacaxi ao Vinho",
+   "desc": "Ao leite",
+   "slug": "delicia-abacaxi-vinho"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Beijinho",
+   "desc": "Ao leite",
+   "slug": "delicia-beijinho"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Chocolate",
+   "desc": "Ao leite",
+   "slug": "delicia-chocolate"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Iogurte com Frutas Vermelhas",
+   "desc": "Ao leite",
+   "slug": "delicia-iogurte-frutas-vermelhas"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Mousse de Maracujá",
+   "desc": "Ao leite",
+   "slug": "delicia-mousse-maracuja"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Queijo com Goiabada",
+   "desc": "Ao leite",
+   "slug": "delicia-queijo-goiabada"
+  },
+  {
+   "category": "Delícia",
+   "price": 275,
+   "upb": 39,
+   "name": "Picolé Delícia Torta de Limão",
+   "desc": "Ao leite",
+   "slug": "delicia-torta-limao"
+  },
+  {
+   "category": "Sabores Regionais",
+   "price": 299,
+   "upb": 39,
+   "name": "Picolé Regionais Cajá",
+   "desc": "",
+   "slug": "regionais-caja"
+  },
+  {
+   "category": "Sabores Regionais",
+   "price": 299,
+   "upb": 39,
+   "name": "Picolé Regionais Caju",
+   "desc": "",
+   "slug": "regionais-caju"
+  },
+  {
+   "category": "Sabores Regionais",
+   "price": 299,
+   "upb": 39,
+   "name": "Picolé Regionais Graviola",
+   "desc": "",
+   "slug": "regionais-graviola"
+  },
+  {
+   "category": "Sabores Regionais",
+   "price": 299,
+   "upb": 39,
+   "name": "Picolé Regionais Cupuaçu",
+   "desc": "",
+   "slug": "regionais-cupuacu"
+  },
+  {
+   "category": "Sabores Regionais",
+   "price": 299,
+   "upb": 39,
+   "name": "Picolé Regionais Tapioca",
+   "desc": "",
+   "slug": "regionais-tapioca"
+  },
+  {
+   "category": "Clássicos",
+   "price": 400,
+   "upb": 33,
+   "name": "Picolé Clássicos Bombom no Palito",
+   "desc": "",
+   "slug": "classicos-bombom"
+  },
+  {
+   "category": "Clássicos",
+   "price": 400,
+   "upb": 33,
+   "name": "Picolé Clássicos Brigadeiro",
+   "desc": "",
+   "slug": "classicos-brigadeiro"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Brigadeiro",
+   "desc": "",
+   "slug": "sensa-brigadeiro"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Choco Amendoim",
+   "desc": "",
+   "slug": "sensa-choco-amendoim"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Chocolate Branco",
+   "desc": "",
+   "slug": "sensa-chocolate-branco"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Choco Menta",
+   "desc": "",
+   "slug": "sensa-choco-menta"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Clássico",
+   "desc": "",
+   "slug": "sensa-classico"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Frutas Vermelhas",
+   "desc": "",
+   "slug": "sensa-frutas-vermelhas"
+  },
+  {
+   "category": "Sensa",
+   "price": 599,
+   "upb": 20,
+   "name": "Picolé Sensa Meio Amargo",
+   "desc": "",
+   "slug": "sensa-meio-amargo"
+  },
+  {
+   "category": "Festa no Pote",
+   "price": 1799,
+   "upb": 4,
+   "name": "Pote Festa Trio Tropical",
+   "desc": "Limão, uva e abacaxi · 2 L",
+   "slug": "festa-pote-trio-tropical"
+  },
+  {
+   "category": "Festa no Pote",
+   "price": 1799,
+   "upb": 4,
+   "name": "Pote Festa Trio Yogo",
+   "desc": "Morango, iogurte e maracujá · 2 L",
+   "slug": "festa-pote-trio-yogo"
+  },
+  {
+   "category": "Tradicionais",
+   "price": 2199,
+   "upb": 4,
+   "name": "Pote Tradicionais Creme",
+   "desc": "2 L",
+   "slug": "tradicionais-creme"
+  },
+  {
+   "category": "Tradicionais",
+   "price": 2199,
+   "upb": 4,
+   "name": "Pote Tradicionais Napolitano",
+   "desc": "2 L",
+   "slug": "tradicionais-napolitano"
+  },
+  {
+   "category": "Seleções",
+   "price": 2399,
+   "upb": 4,
+   "name": "Pote Seleções Carioca",
+   "desc": "Creme e chocolate · 2 L",
+   "slug": "selecoes-carioca"
+  },
+  {
+   "category": "Seleções",
+   "price": 2399,
+   "upb": 4,
+   "name": "Pote Seleções Chocolate",
+   "desc": "2 L",
+   "slug": "selecoes-chocolate"
+  },
+  {
+   "category": "Seleções",
+   "price": 2399,
+   "upb": 4,
+   "name": "Pote Seleções Coco",
+   "desc": "2 L",
+   "slug": "selecoes-coco"
+  },
+  {
+   "category": "Seleções",
+   "price": 2399,
+   "upb": 4,
+   "name": "Pote Seleções Flocos",
+   "desc": "2 L",
+   "slug": "selecoes-flocos"
+  },
+  {
+   "category": "Seleções",
+   "price": 2399,
+   "upb": 4,
+   "name": "Pote Seleções Passas ao Rum",
+   "desc": "2 L",
+   "slug": "selecoes-passas-rum"
+  },
+  {
+   "category": "Duetto",
+   "price": 2599,
+   "upb": 4,
+   "name": "Pote Duetto Chocolate com Trufa",
+   "desc": "2 L",
+   "slug": "duetto-chocolate-trufa"
+  },
+  {
+   "category": "Duetto",
+   "price": 2599,
+   "upb": 4,
+   "name": "Pote Duetto Frutas Vermelhas",
+   "desc": "2 L",
+   "slug": "duetto-frutas-vermelhas"
+  },
+  {
+   "category": "Duetto",
+   "price": 2599,
+   "upb": 4,
+   "name": "Pote Duetto Leitinho Trufado",
+   "desc": "2 L",
+   "slug": "duetto-leitinho-trufado"
+  },
+  {
+   "category": "Duetto",
+   "price": 2599,
+   "upb": 4,
+   "name": "Pote Duetto Mousse de Maracujá",
+   "desc": "2 L",
+   "slug": "duetto-mousse-maracuja"
+  },
+  {
+   "category": "Hello Kitty e Amigos",
+   "price": 2699,
+   "upb": 4,
+   "name": "Pote Hello Kitty Beijinho e Brigadeiro",
+   "desc": "2 L",
+   "slug": "hk-pote-beijinho-brigadeiro"
+  },
+  {
+   "category": "Hello Kitty e Amigos",
+   "price": 2699,
+   "upb": 4,
+   "name": "Pote Hello Kitty Morango e Leite Condensado",
+   "desc": "2 L",
+   "slug": "hk-pote-morango-leite-condensado"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Açaí",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-acai"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Amendoim",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-amendoim"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Chocolate",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-chocolate"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Coco",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-coco"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Limão",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-limao"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Milho Verde",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-milho"
+  },
+  {
+   "category": "Zero",
+   "price": 400,
+   "upb": 39,
+   "name": "Picolé Zero Uva",
+   "desc": "Zero adição de açúcares",
+   "slug": "zero-uva"
+  },
+  {
+   "category": "Zero",
+   "price": 2199,
+   "upb": 4,
+   "name": "Pote Zero Napolitano",
+   "desc": "1,5 L · zero adição de açúcares",
+   "slug": "zero-pote-napolitano"
+  },
+  {
+   "category": "Açaí",
+   "price": 1225,
+   "upb": 4,
+   "name": "Açaí 200g Banana",
+   "desc": "Sorbet de açaí com banana",
+   "slug": "acai-200-banana"
+  },
+  {
+   "category": "Açaí",
+   "price": 1225,
+   "upb": 4,
+   "name": "Açaí 200g Guaraná",
+   "desc": "Sorbet de açaí com guaraná",
+   "slug": "acai-200-guarana"
+  },
+  {
+   "category": "Açaí",
+   "price": 3099,
+   "upb": 4,
+   "name": "Açaí 1,5L Guaraná",
+   "desc": "Sorbet de açaí com guaraná · 1,05 kg",
+   "slug": "acai-15-guarana"
+  },
+  {
+   "category": "Top Sundae",
+   "price": 599,
+   "upb": 16,
+   "name": "Top Sundae Chocolate",
+   "desc": "",
+   "slug": "sundae-chocolate"
+  },
+  {
+   "category": "Top Sundae",
+   "price": 599,
+   "upb": 16,
+   "name": "Top Sundae Doce de Leite",
+   "desc": "",
+   "slug": "sundae-doce-de-leite"
+  },
+  {
+   "category": "Top Sundae",
+   "price": 599,
+   "upb": 16,
+   "name": "Top Sundae Morango",
+   "desc": "",
+   "slug": "sundae-morango"
+  },
+  {
+   "category": "Giratto",
+   "price": 799,
+   "upb": 18,
+   "name": "Cone Giratto Avelã Trufado",
+   "desc": "",
+   "slug": "giratto-avela-trufado"
+  },
+  {
+   "category": "Giratto",
+   "price": 799,
+   "upb": 18,
+   "name": "Cone Giratto Crocante",
+   "desc": "",
+   "slug": "giratto-crocante"
+  },
+  {
+   "category": "Giratto",
+   "price": 799,
+   "upb": 18,
+   "name": "Cone Giratto Leite Trufado",
+   "desc": "",
+   "slug": "giratto-leite-trufado"
+  },
+  {
+   "category": "Sensa Bombom",
+   "price": 999,
+   "upb": 12,
+   "name": "Sensa Bombom Açaí",
+   "desc": "Caixa de bombons 105 g",
+   "slug": "sensa-bombom-acai"
+  },
+  {
+   "category": "Sensa Bombom",
+   "price": 999,
+   "upb": 12,
+   "name": "Sensa Bombom Clássico",
+   "desc": "Caixa de bombons 105 g",
+   "slug": "sensa-bombom-classico"
+  }
+ ]
+}
