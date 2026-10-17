@@ -61,7 +61,7 @@ async function readXlsxRows(base64) {
   return rows;
 }
 
-function createApp(db) {
+function createApp(db, { testMode = false } = {}) {
   const app = express();
   const sessions = createSessionStore(db);
   const inv = createInventory(db);
@@ -145,6 +145,7 @@ function createApp(db) {
       whatsapp: s.whatsapp,
       min_order_cents: Number(s.min_order_cents) || 0,
       order_notice: s.order_notice,
+      test_mode: testMode,
     });
   });
 
@@ -307,7 +308,7 @@ function createApp(db) {
         COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity END), 0) AS entradas,
         COALESCE(SUM(CASE WHEN quantity < 0 THEN -quantity END), 0) AS saidas
       FROM stock_movements WHERE created_at >= ? AND created_at < ?`).get(start, end);
-    res.json({ counts, lowStock, pendingCustomers, today, ...reports.dashboard(), storage_ok: storageIsPersistent() });
+    res.json({ counts, lowStock, pendingCustomers, today, ...reports.dashboard(), storage_ok: storageIsPersistent(), test_mode: testMode });
   });
 
   // ---------- admin: produtos ----------

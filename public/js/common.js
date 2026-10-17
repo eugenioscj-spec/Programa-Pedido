@@ -173,6 +173,13 @@ async function applyBranding() {
     const cfg = await api('/api/config');
     $$('[data-store-name]').forEach((el) => { el.textContent = cfg.store_name; });
     $$('[data-store-sub]').forEach((el) => { el.textContent = cfg.store_subtitle; });
+    if (cfg.test_mode && !$('#test-strip')) {
+      const strip = document.createElement('div');
+      strip.id = 'test-strip';
+      strip.className = 'test-strip';
+      strip.textContent = 'Ambiente de teste — pedidos e estoque de exemplo';
+      document.body.prepend(strip);
+    }
     return cfg;
   } catch {
     return {};

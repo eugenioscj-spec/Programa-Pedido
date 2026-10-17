@@ -236,6 +236,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .empty { text-align: center; padding: 40px 10px; color: var(--muted); }
 
 /* ---------- v2: fotos, custos, relatórios ---------- */
+.test-strip { background: #22182a; color: #fff; text-align: center; font-size: .8rem; font-weight: 600; padding: 4px 12px; letter-spacing: .02em; }
 .thumb { display: block; width: 44px; height: 44px; object-fit: contain; border-radius: 8px; background: #f6f2f7; }
 .thumb-empty { border: 1px dashed var(--line); }
 .product-photo { display: flex; gap: 14px; align-items: center; margin-bottom: 14px; }

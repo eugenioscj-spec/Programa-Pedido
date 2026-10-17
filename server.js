@@ -25,7 +25,15 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD) {
   }
 }
 
-const app = createApp(db);
+// MODO_TESTE=sim: ambiente de TESTE online, com catálogo, clientes e estoque de exemplo.
+// Nunca ligue no sistema de verdade: os custos e movimentações são inventados.
+const testMode = String(process.env.MODO_TESTE || '').toLowerCase() === 'sim';
+if (testMode) {
+  console.log('MODO DE TESTE ligado: carregando dados de exemplo (só na primeira vez).');
+  require('./src/test-data').seedTestData(db);
+}
+
+const app = createApp(db, { testMode });
 
 const server = app.listen(PORT, () => {
   console.log(`Oggi Pedidos B2B rodando em http://localhost:${PORT}`);
