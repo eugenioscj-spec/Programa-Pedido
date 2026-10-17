@@ -851,10 +851,19 @@ function openProductForm(p, preset = {}, onSaved) {
         <label class="check"><input type="checkbox" name="active" ${v.active ? 'checked' : ''}> Ativo (aparece no catálogo)</label>
       </div>
       ${p ? `<p class="small muted">Estoque atual: ${boxesLabel(p.stock_units, p.units_per_box)} (${p.stock_units} un)${avgCost(p) !== null ? ` · custo médio ${moneyPrecise(avgCost(p))}/un` : ''}. Para alterar o estoque use “Entrada / Saída”.</p>` : ''}
-      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button>
+        ${p ? '<span style="flex:1"></span><button type="button" class="btn-danger" id="btn-delete-product">Excluir produto</button>' : ''}</div>
     </form>`);
   // leitores de código de barras enviam Enter: não submeter o form ao bipar
   $$('input[name=barcode], input[name=box_barcode]', m).forEach((i) => i.addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); }));
+  const del = $('#btn-delete-product', m);
+  if (del) del.addEventListener('click', () => guard(async () => {
+    if (!confirm(`Excluir "${p.name}"? Só é possível se o produto nunca teve estoque nem pedidos.`)) return;
+    await api(`/api/admin/produtos/${p.id}`, { method: 'DELETE' });
+    toast('Produto excluído.', 'ok');
+    closeModal();
+    renderProducts();
+  }));
 
   const uploadImage = async (productId, img) => {
     const r = await api(`/api/admin/produtos/${productId}/imagem`, { method: 'PUT', body: { mime: img.mime, data: img.data } });
@@ -1090,8 +1099,8 @@ async function renderConfig() {
           <div class="field"><label>WhatsApp da loja (com DDD, ex.: 5566999990000)</label><input name="whatsapp" inputmode="tel" value="${esc(s.whatsapp)}"></div>
           <div class="field"><label>Pedido mínimo (R$, 0 = sem mínimo)</label><input name="min_order" inputmode="decimal" value="${centsToInput(s.min_order_cents)}"></div>
           <div class="field"><label>Aviso no catálogo</label><textarea name="order_notice">${esc(s.order_notice)}</textarea></div>
-          <label class="check" style="margin-bottom:8px"><input type="checkbox" name="auto_approve_customers" ${s.auto_approve_customers === '1' ? 'checked' : ''}> Liberar novos clientes automaticamente (sem aprovação)</label>
-          <label class="check" style="margin-bottom:14px"><input type="checkbox" name="show_stock_quantity" ${s.show_stock_quantity === '1' ? 'checked' : ''}> Mostrar quantidade disponível para o cliente</label>
+          <label class="check" style="margin-bottom:6px"><input type="checkbox" name="auto_approve_customers" ${s.auto_approve_customers === '1' ? 'checked' : ''}> Liberar novos clientes automaticamente (sem aprovação)</label>
+          <p class="small muted" style="margin:0 0 14px">O cliente nunca vê a quantidade em estoque: só “Disponível” ou “Esgotado”. Se pedir mais do que temos, o pedido é recusado.</p>
           <h2 style="margin-top:8px">Estoque</h2>
           <div class="field"><label>Observação obrigatória em saída manual acima de (R$, 0 = nunca)</label><input name="out_note_threshold" inputmode="decimal" value="${centsToInput(s.out_note_threshold_cents)}"></div>
           <div class="field"><label>Fornecedor padrão na entrada</label><input name="default_supplier" value="${esc(s.default_supplier || '')}"></div>

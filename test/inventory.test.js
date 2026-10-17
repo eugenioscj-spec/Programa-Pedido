@@ -83,7 +83,7 @@ test('venda B2B: reserva, baixa a custo médio na separação, receita e estorno
   });
   assert.equal(stock(), 48, 'pedido novo não mexe no físico');
   assert.equal(inv.availableUnits(productId), 48 - 29, 'mas reserva o disponível');
-  assert.throws(() => inv.createOrder({ customerId, items: [{ product_id: productId, unit_type: 'unidade', quantity: 20 }] }), /insuficiente/);
+  assert.throws(() => inv.createOrder({ customerId, items: [{ product_id: productId, unit_type: 'unidade', quantity: 20 }] }), /Não temos a quantidade pedida/);
 
   inv.changeStatus({ orderId, status: 'confirmado' });
   inv.changeStatus({ orderId, status: 'separado' });

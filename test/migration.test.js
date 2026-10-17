@@ -42,7 +42,7 @@ test('migração: banco no formato antigo, com dados, migra sem perder nada', ()
 
   const logs = [];
   const db = openDatabase(file, { log: (m) => logs.push(m) });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '2');
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '3');
   assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'store_name'").get().value, 'Minha Loja');
 
   // cópia de segurança feita antes de migrar
@@ -83,5 +83,40 @@ test('migração: banco no formato antigo, com dados, migra sem perder nada', ()
   assert.equal(again.prepare('SELECT COUNT(*) n FROM stock_movements').get().n, 9);
   assert.equal(fs.readdirSync(path.join(dir, 'backups')).length, 1);
   again.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('migração 3: remove os produtos de exemplo da 1ª versão sem mexer no resto', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oggi-mig3-'));
+  const file = path.join(dir, 'oggi.db');
+  const old = new Database(file);
+  old.exec(SCHEMA_V1);
+  old.exec(`
+    INSERT INTO settings (key, value) VALUES ('show_stock_quantity', '1');
+    INSERT INTO products (id, sku, name, units_per_box, unit_price_cents, box_price_cents, stock_units) VALUES
+      (1, 'EX001', 'Picolé Chocolate (exemplo)', 24, 450, 9800, 20),
+      (2, 'EX002', 'Picolé Morango (exemplo)', 24, 450, 9800, 24),
+      (3, 'OG26-SENSA-CLASSICO', 'Picolé Sensa Clássico', 20, 599, 11980, 40);
+    INSERT INTO customers (id, cnpj, razao_social, password_hash, status) VALUES (1, '11222333000181', 'Cliente', 'x', 'ativo');
+    INSERT INTO orders (id, customer_id, status, total_cents, stock_deducted) VALUES
+      (1, 1, 'separado', 4500 + 599, 1), (2, 1, 'novo', 9800, 0);
+    INSERT INTO order_items (order_id, product_id, product_name, unit_type, quantity, units_per_box, units_total, price_cents, subtotal_cents) VALUES
+      (1, 1, 'Picolé Chocolate (exemplo)', 'unidade', 10, 24, 10, 450, 4500),
+      (1, 3, 'Picolé Sensa Clássico', 'unidade', 1, 20, 1, 599, 599),
+      (2, 2, 'Picolé Morango (exemplo)', 'caixa', 1, 24, 24, 9800, 9800);
+    INSERT INTO stock_movements (id, product_id, type, quantity, balance_after, order_id) VALUES
+      (1, 1, 'entrada', 30, 30, NULL), (2, 3, 'entrada', 41, 41, NULL),
+      (3, 1, 'saida_pedido', -10, 20, 1), (4, 3, 'saida_pedido', -1, 40, 1), (5, 2, 'entrada', 24, 24, NULL);
+  `);
+  old.close();
+
+  const db = openDatabase(file, { log: () => {} });
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '3');
+  assert.deepEqual(db.prepare('SELECT name FROM products').all().map((r) => r.name), ['Picolé Sensa Clássico']);
+  assert.deepEqual(db.prepare('SELECT id FROM stock_movements ORDER BY id').all().map((r) => r.id), [2, 4], 'só o histórico do produto de verdade');
+  assert.deepEqual(db.prepare('SELECT id, total_cents FROM orders').all(), [{ id: 1, total_cents: 599 }], 'pedido misto fica, só de exemplo sai');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM settings WHERE key = 'show_stock_quantity'").get().n, 0);
+  assert.throws(() => db.prepare('DELETE FROM stock_movements WHERE id = 2').run(), /não podem ser apagadas/);
+  db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });

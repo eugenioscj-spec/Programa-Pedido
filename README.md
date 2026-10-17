@@ -83,6 +83,8 @@ O painel inicial mostra o estoque a custo (e a preço B2B), as vendas e a margem
 - **Produtos → Catálogo Oggi 2026** cadastra os 90 produtos do catálogo, com foto, preço (B2B e varejo) e unidades por caixa. Quem já existe não é alterado. Os produtos entram sem código de barras: bipe na tela do produto ou preencha pela planilha.
 - **Produtos → Unidades por caixa** muda a quantidade por caixa de uma linha inteira de uma vez (o preço da caixa calculado acompanha).
 - No catálogo do cliente, produtos esgotados ficam escondidos, com um botão "Mostrar esgotados".
+- **O cliente nunca vê a quantidade em estoque**, só "Disponível" ou "Esgotado". Na revisão do pedido, os itens que pedem mais do que temos ficam em vermelho e o pedido não é enviado até ele diminuir. O servidor confere de novo ao receber o pedido, e a recusa não informa números.
+- **Excluir produto** (na tela do produto) só funciona para produto que nunca teve estoque nem pedido, porque o histórico é permanente. Para tirar do catálogo um produto que já teve movimentação, desmarque "Ativo".
 
 ## Leitor de código de barras
 
@@ -103,7 +105,7 @@ Pelo celular também funciona: digite o código ou o nome do produto no campo.
 2. Nesta página do GitHub, clique em **Code → Download ZIP** e extraia o arquivo (botão direito → *Extrair tudo*).
 3. Dentro da pasta, dê dois cliques em **`Testar no Windows.bat`** (ou **`Testar no Mac.command`**).
 
-Na primeira vez ele instala tudo e carrega **dados de exemplo**: o Catálogo Oggi 2026 com fotos, dois clientes e 45 dias de movimentações de todos os tipos (com custos), para você testar os relatórios. Depois abre o painel no navegador e mostra o endereço para testar pelo celular, que precisa estar no mesmo Wi-Fi. Os dados de teste ficam na pasta `data` e não vão para o sistema publicado.
+Na primeira vez ele instala tudo e carrega **dados de teste**: o Catálogo Oggi 2026 com fotos, dois clientes, 45 dias de movimentações de todos os tipos (com custos) e **5 caixas de cada produto do catálogo**, para dar para comprar por caixa ou por unidade. Num banco de teste antigo, os produtos "(exemplo)" da primeira versão são removidos e as caixas de teste são lançadas uma única vez. Depois abre o painel no navegador e mostra o endereço para testar pelo celular, que precisa estar no mesmo Wi-Fi. Os dados de teste ficam na pasta `data` e não vão para o sistema publicado.
 
 ## Instalar e rodar no seu computador (para desenvolvedores)
 

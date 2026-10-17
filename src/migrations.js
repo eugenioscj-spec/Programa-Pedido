@@ -23,6 +23,13 @@ const MOVEMENT_TYPES = [
   'sobra_inventario', 'divergencia_inventario', 'abertura_custo', 'estorno',
 ];
 
+const MOV_DELETE_GUARD = `
+  CREATE TRIGGER IF NOT EXISTS mov_no_delete BEFORE DELETE ON stock_movements
+  BEGIN SELECT RAISE(ABORT, 'Movimentações não podem ser apagadas. Faça um estorno.'); END;`;
+
+// Produtos de exemplo da 1ª versão do sistema (scripts/seed-demo.js antigo): SKU EX001…, nome "… (exemplo)".
+const LEGACY_DEMO_PRODUCTS = "sku GLOB 'EX[0-9][0-9][0-9]' AND name LIKE '% (exemplo)'";
+
 const MIGRATIONS = [
   {
     version: 2,
@@ -153,8 +160,7 @@ const MIGRATIONS = [
         -- Kardex é imutável: correção é sempre um estorno.
         CREATE TRIGGER IF NOT EXISTS mov_no_update BEFORE UPDATE ON stock_movements
         BEGIN SELECT RAISE(ABORT, 'Movimentações não podem ser alteradas. Faça um estorno.'); END;
-        CREATE TRIGGER IF NOT EXISTS mov_no_delete BEFORE DELETE ON stock_movements
-        BEGIN SELECT RAISE(ABORT, 'Movimentações não podem ser apagadas. Faça um estorno.'); END;
+        ${MOV_DELETE_GUARD}
 
         -- Saldo nunca negativo, e produto sem unidades não pode ter valor ("centavo fantasma").
         CREATE TRIGGER IF NOT EXISTS products_stock_guard BEFORE UPDATE OF stock_units, stock_value_cents ON products
@@ -165,6 +171,34 @@ const MIGRATIONS = [
       const setDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
       setDefault.run('out_note_threshold_cents', '20000');
       setDefault.run('default_supplier', 'Franqueadora Oggi');
+    },
+  },
+  {
+    version: 3,
+    name: 'Remove os produtos de exemplo da 1ª versão e a opção de mostrar quantidade ao cliente',
+    up(db) {
+      // O cliente não vê mais a quantidade em estoque (só disponível/esgotado).
+      db.prepare("DELETE FROM settings WHERE key = 'show_stock_quantity'").run();
+
+      const ids = db.prepare(`SELECT id FROM products WHERE ${LEGACY_DEMO_PRODUCTS}`).all().map((r) => r.id);
+      if (!ids.length) return;
+      const list = ids.join(',');
+      const orders = db.prepare(`SELECT DISTINCT order_id AS id FROM order_items WHERE product_id IN (${list})`).all().map((r) => r.id);
+      // Produtos de teste saem por inteiro, com o histórico deles. O resto do kardex continua imutável.
+      db.exec('DROP TRIGGER IF EXISTS mov_no_delete');
+      db.exec(`DELETE FROM stock_movements WHERE product_id IN (${list})`);
+      db.exec(MOV_DELETE_GUARD);
+      db.exec(`DELETE FROM product_images WHERE product_id IN (${list})`);
+      db.exec(`DELETE FROM order_items WHERE product_id IN (${list})`);
+      for (const orderId of orders) {
+        const left = db.prepare('SELECT COUNT(*) n FROM order_items WHERE order_id = ?').get(orderId).n;
+        if (left) {
+          db.prepare('UPDATE orders SET total_cents = (SELECT SUM(subtotal_cents) FROM order_items WHERE order_id = ?) WHERE id = ?').run(orderId, orderId);
+        } else if (!db.prepare('SELECT 1 FROM stock_movements WHERE order_id = ? LIMIT 1').get(orderId)) {
+          db.prepare('DELETE FROM orders WHERE id = ?').run(orderId);
+        }
+      }
+      db.exec(`DELETE FROM products WHERE id IN (${list})`);
     },
   },
 ];

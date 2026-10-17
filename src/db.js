@@ -125,7 +125,6 @@ const DEFAULT_SETTINGS = {
   whatsapp: '',
   min_order_cents: '0',
   auto_approve_customers: '0',
-  show_stock_quantity: '1',
   order_notice: 'Pedidos confirmados em até 1 dia útil. Entrega/retirada combinada pelo WhatsApp.',
 };
 

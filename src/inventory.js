@@ -12,9 +12,10 @@
 const { MOVEMENT_TYPES } = require('./migrations');
 
 class BusinessError extends Error {
-  constructor(message, status = 400) {
+  constructor(message, status = 400, details = undefined) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -343,6 +344,19 @@ function createInventory(db) {
     return unitType === 'caixa' ? p.box_price_cents : p.unit_price_cents;
   }
 
+  // Quais produtos do carrinho NÃO temos na quantidade pedida (só ids, sem revelar o estoque).
+  function unavailableProducts(items) {
+    const need = new Map();
+    for (const it of Array.isArray(items) ? items : []) {
+      const p = q.product.get(Number(it.product_id));
+      const quantity = Number(it.quantity);
+      if (!p || !isInt(quantity) || quantity <= 0) continue;
+      const units = quantity * (it.unit_type === 'caixa' ? p.units_per_box : 1);
+      need.set(p.id, (need.get(p.id) || 0) + units);
+    }
+    return [...need].filter(([id, units]) => units > availableUnits(id)).map(([id]) => id);
+  }
+
   // items: [{ product_id, unit_type: 'caixa'|'unidade', quantity }]
   const createOrder = db.transaction(({ customerId, items, notes, deliveryDate, minOrderCents = 0, at }) => {
     if (!Array.isArray(items) || items.length === 0) throw new BusinessError('Seu carrinho está vazio.');
@@ -374,15 +388,15 @@ function createInventory(db) {
       });
     }
 
-    for (const [productId, need] of needByProduct) {
-      const available = availableUnits(productId);
-      if (need > available) {
-        const p = q.product.get(productId);
-        throw new BusinessError(
-          `Estoque insuficiente de "${p.name}": disponível ${Math.max(0, available)} un., pedido ${need} un.`,
-          409,
-        );
-      }
+    // O cliente nunca vê quanto temos: só a recusa, sem números.
+    const short = [...needByProduct].filter(([productId, need]) => need > availableUnits(productId)).map(([productId]) => productId);
+    if (short.length) {
+      const names = short.map((id) => `"${q.product.get(id).name}"`).join(', ');
+      throw new BusinessError(
+        `Não temos a quantidade pedida de ${names} no momento. Diminua a quantidade ou fale com a loja.`,
+        409,
+        { unavailable: short },
+      );
     }
 
     const total = lines.reduce((s, l) => s + l.subtotal_cents, 0);
@@ -482,6 +496,7 @@ function createInventory(db) {
   return {
     reservedUnits,
     availableUnits,
+    unavailableProducts,
     exitValue,
     move: db.transaction(move),
     receive,

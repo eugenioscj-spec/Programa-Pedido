@@ -1,10 +1,12 @@
 'use strict';
 
-// Dados de EXEMPLO para testar o sistema no computador (Testar no Windows.bat / npm run seed):
-// carrega o Catálogo Oggi 2026 (com fotos), dois clientes e ~45 dias de movimentações de
-// todos os tipos — entradas com custo, vendas B2B, transferências para as lojas, perdas,
-// saídas sem venda, inventário, um estorno e um produto "sem custo" para testar o custo inicial.
-// Não roda se já houver produtos cadastrados.
+// Dados de TESTE para usar o sistema no computador (Testar no Windows.bat / npm run seed).
+// NUNCA rode isto no sistema de verdade (Railway): ele lança estoque com custo de exemplo.
+//
+// - Banco novo: Catálogo Oggi 2026 (com fotos), dois clientes e ~45 dias de movimentações de
+//   todos os tipos, para testar os relatórios.
+// - Sempre (uma única vez por banco): algumas caixas de cada produto do catálogo que estiver
+//   sem caixa disponível, para dar para comprar por caixa ou por unidade.
 
 const { openDatabase } = require('../src/db');
 const { createInventory } = require('../src/inventory');
@@ -12,10 +14,13 @@ const { hashPassword } = require('../src/auth');
 const { loadOggiCatalog } = require('../src/catalog');
 const T = require('../src/time');
 
-const db = openDatabase();
+const BOXES = 5; // caixas de teste por produto
 
-if (db.prepare('SELECT COUNT(*) n FROM products').get().n > 0) {
-  console.log('Já existem produtos cadastrados: os dados de exemplo não foram carregados.');
+const db = openDatabase();
+const fresh = db.prepare('SELECT (SELECT COUNT(*) FROM products) + (SELECT COUNT(*) FROM stock_movements) AS n').get().n === 0;
+const stockLoaded = db.prepare("SELECT value FROM settings WHERE key = 'test_stock_loaded'").get();
+if (!fresh && stockLoaded) {
+  console.log('Dados de teste já carregados.');
   process.exit(0);
 }
 
@@ -24,8 +29,29 @@ const today = T.localDate();
 const at = (daysAgo, hhmm) => T.localToUtc(`${T.addDays(today, -daysAgo)} ${hhmm}`);
 const user = 'Exemplo';
 
+let topped = 0;
 db.transaction(() => {
   loadOggiCatalog(db);
+  const ins = db.prepare(`INSERT OR IGNORE INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, cidade, password_hash, status)
+    VALUES (?, ?, ?, ?, ?, 'Sinop', ?, 'ativo')`);
+  ins.run('11222333000181', 'Lanchonete Exemplo LTDA', 'Lanchonete Exemplo', 'Maria', '(66) 99999-0000', hashPassword('cliente123'));
+  ins.run('11444777000161', 'Mercadinho Bom Preço LTDA', 'Mercadinho Bom Preço', 'João', '(66) 98888-1111', hashPassword('cliente123'));
+  const customer = (cnpj) => db.prepare('SELECT id FROM customers WHERE cnpj = ?').get(cnpj).id;
+  if (fresh) demoHistory(customer('11222333000181'), customer('11444777000161'));
+
+  // Estoque de teste: algumas caixas de cada produto do catálogo sem caixa disponível.
+  const lines = db.prepare("SELECT * FROM products WHERE sku LIKE 'OG26-%' AND active = 1 ORDER BY category, name").all()
+    .filter((prod) => inv.availableUnits(prod.id) < prod.units_per_box)
+    .map((prod) => ({
+      product_id: prod.id, units: BOXES * prod.units_per_box, cost_per: 'caixa',
+      cost_cents: Math.round(prod.unit_price_cents * 0.55 * prod.units_per_box), // custo de exemplo ≈ 55% do preço
+    }));
+  if (lines.length) inv.receive({ lines, document: 'Estoque de teste', supplier: 'Franqueadora Oggi', note: 'Estoque de teste (custo de exemplo)', user });
+  topped = lines.length;
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('test_stock_loaded', '1')").run();
+})();
+
+function demoHistory(c1, c2) {
   const p = (name) => db.prepare('SELECT * FROM products WHERE name = ?').get(name);
   const loja = (name) => db.prepare('SELECT id FROM locations WHERE name = ?').get(name).id;
   const reason = (name) => db.prepare('SELECT id FROM loss_reasons WHERE name = ?').get(name).id;
@@ -38,10 +64,6 @@ db.transaction(() => {
   ];
   for (const [name, ean, dun] of codes) db.prepare('UPDATE products SET barcode = ?, box_barcode = ? WHERE name = ?').run(ean, dun, name);
 
-  const ins = db.prepare(`INSERT INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, cidade, password_hash, status)
-    VALUES (?, ?, ?, ?, ?, 'Sinop', ?, 'ativo')`);
-  const c1 = Number(ins.run('11222333000181', 'Lanchonete Exemplo LTDA', 'Lanchonete Exemplo', 'Maria', '(66) 99999-0000', hashPassword('cliente123')).lastInsertRowid);
-  const c2 = Number(ins.run('11444777000161', 'Mercadinho Bom Preço LTDA', 'Mercadinho Bom Preço', 'João', '(66) 98888-1111', hashPassword('cliente123')).lastInsertRowid);
 
   // custo de exemplo ≈ 55% do preço B2B, por caixa
   const boxCost = (prod, factor = 0.55) => Math.round(prod.unit_price_cents * factor * prod.units_per_box);
@@ -106,7 +128,8 @@ db.transaction(() => {
   order(c1, [['Picolé Sensa Brigadeiro', 'caixa', 1], ['Pote Duetto Frutas Vermelhas', 'unidade', 2]], 3);
   order(c2, [['Picolé Frutos Morango', 'caixa', 1], ['Açaí 200g Guaraná', 'unidade', 6]], 1, { stop: 'confirmado' });
   order(c1, [['Pote Seleções Flocos', 'caixa', 1], ['Picolé Festa Melancia', 'unidade', 20]], 0, { stop: 'novo' });
-})();
+}
 
-console.log('Dados de exemplo criados (Catálogo Oggi 2026 + 45 dias de movimentações).');
+if (fresh) console.log('Dados de teste criados: Catálogo Oggi 2026 + 45 dias de movimentações de exemplo.');
+console.log(`Estoque de teste: ${BOXES} caixas de ${topped} produto(s) do catálogo.`);
 console.log('Clientes de teste → CNPJ 11.222.333/0001-81 ou 11.444.777/0001-61 · senha cliente123');

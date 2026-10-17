@@ -76,8 +76,10 @@ test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', asy
 
   const cat = await cli('GET', '/api/catalogo');
   assert.equal(cat.status, 200);
-  assert.equal(cat.data.products[0].available_units, 60);
+  assert.equal(cat.data.products[0].in_stock, true);
   assert.equal(cat.data.products[0].stock_units, undefined, 'não expõe campos internos');
+  assert.equal(cat.data.products[0].available_units, undefined, 'cliente não vê a quantidade em estoque');
+  assert.doesNotMatch(JSON.stringify(cat.data), /"(stock_units|available_units|reserved_units|stock_value_cents)"/);
 
   const ped = await cli('POST', '/api/pedidos', {
     items: [{ product_id: pid, unit_type: 'caixa', quantity: 2 }, { product_id: pid, unit_type: 'unidade', quantity: 3 }],
@@ -87,9 +89,16 @@ test('fluxo completo: cadastro, aprovação, pedido, separação e entrega', asy
   assert.equal(ped.data.order.total_cents, 2 * 9000 + 3 * 500);
   const oid = ped.data.order.id;
 
-  assert.equal((await cli('GET', '/api/catalogo')).data.products[0].available_units, 17);
+  // restam 17 un: uma caixa (20) é recusada, sem revelar quanto temos
+  const check = await cli('POST', '/api/pedidos/verificar', { items: [{ product_id: pid, unit_type: 'caixa', quantity: 1 }] });
+  assert.deepEqual(check.data, { unavailable: [pid] });
+  const ok = await cli('POST', '/api/pedidos/verificar', { items: [{ product_id: pid, unit_type: 'unidade', quantity: 17 }] });
+  assert.deepEqual(ok.data, { unavailable: [] });
   const tooMuch = await cli('POST', '/api/pedidos', { items: [{ product_id: pid, unit_type: 'caixa', quantity: 1 }] });
   assert.equal(tooMuch.status, 409);
+  assert.match(tooMuch.data.error, /Não temos a quantidade pedida de "Picolé Uva"/);
+  assert.doesNotMatch(tooMuch.data.error, /\d/, 'a mensagem não informa quantidades');
+  assert.deepEqual(tooMuch.data.unavailable, [pid]);
 
   // loja confirma, separa (baixa) e entrega
   await adm('POST', `/api/admin/pedidos/${oid}/status`, { status: 'confirmado' });
@@ -229,6 +238,14 @@ test('painel v2: destinos, estorno, custo inicial, imagens, catálogo e relatór
   assert.match(csv.data, /Perdas e divergências/);
   assert.equal((await adm('GET', '/api/admin/relatorios/xyz')).status, 404);
   assert.equal((await adm('GET', '/api/admin/relatorios/vendas?from=2026-09-10&to=2026-09-01')).status, 400);
+
+  // excluir produto: só se nunca teve estoque nem pedido
+  const nunca = products.find((p) => p.name === 'Pote Duetto Leitinho Trufado');
+  assert.equal((await adm('DELETE', `/api/admin/produtos/${nunca.id}`)).status, 200);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM products WHERE id = ?').get(nunca.id).n, 0);
+  const usado = await adm('DELETE', `/api/admin/produtos/${sensa.id}`);
+  assert.equal(usado.status, 409);
+  assert.match(usado.data.error, /desmarque/);
 
   // locais e motivos editáveis
   await adm('POST', '/api/admin/locais', { name: 'Loja 3' });

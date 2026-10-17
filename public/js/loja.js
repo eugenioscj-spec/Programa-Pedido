@@ -47,14 +47,9 @@ function cartLines() {
   return lines;
 }
 
+// O cliente não sabe quanto temos em estoque: a quantidade é conferida na revisão e no envio do pedido.
 function setQty(p, type, qty) {
-  qty = Math.max(0, Math.floor(Number(qty) || 0));
-  const per = type === 'caixa' ? p.units_per_box : 1;
-  const maxQty = Math.floor((p.available_units - unitsInCart(p, type)) / per);
-  if (qty > maxQty) {
-    qty = Math.max(0, maxQty);
-    toast(`Só temos ${boxesLabel(p.available_units, p.units_per_box)} de ${p.name} disponível.`, 'error');
-  }
+  qty = Math.min(9999, Math.max(0, Math.floor(Number(qty) || 0)));
   const key = cartKey(p.id, type);
   if (qty > 0) state.cart[key] = qty;
   else delete state.cart[key];
@@ -184,10 +179,7 @@ async function renderCatalog() {
 }
 
 function stockLabel(p) {
-  if (p.available_units <= 0) return '<span class="tag tag-out">Esgotado</span>';
-  const low = p.available_units < p.units_per_box * 2;
-  const qty = p.show_quantity ? ` · ${boxesLabel(p.available_units, p.units_per_box)}` : '';
-  return `<span class="tag ${low ? 'tag-low' : 'tag-ok'}">${low ? 'Últimas unidades' : 'Disponível'}${esc(qty)}</span>`;
+  return p.in_stock ? '<span class="tag tag-ok">Disponível</span>' : '<span class="tag tag-out">Esgotado</span>';
 }
 
 function buyLine(p, type) {
@@ -214,8 +206,8 @@ function renderProductList() {
     (state.category === 'Todos' || p.category === state.category)
     && (!term || p.name.toLowerCase().includes(term) || (p.barcode || '').includes(term)));
   // esgotados ficam escondidos (e por último) até o cliente pedir para ver
-  const soldOut = matching.filter((p) => p.available_units <= 0);
-  const list = matching.filter((p) => p.available_units > 0).concat(state.showSoldOut ? soldOut : []);
+  const soldOut = matching.filter((p) => !p.in_stock);
+  const list = matching.filter((p) => p.in_stock).concat(state.showSoldOut ? soldOut : []);
   const wrap = $('#soldout-wrap');
   wrap.innerHTML = soldOut.length
     ? `<button class="btn-secondary btn-sm" id="btn-soldout">${state.showSoldOut ? 'Esconder' : 'Mostrar'} esgotados (${soldOut.length})</button>` : '';
@@ -232,7 +224,7 @@ function renderProductList() {
       <div class="p-name">${esc(p.name)}</div>
       ${p.description ? `<div class="small muted">${esc(p.description)}</div>` : ''}
       <div class="p-stock">${stockLabel(p)}</div>
-      ${p.available_units > 0 ? `${p.sell_box ? buyLine(p, 'caixa') : ''}${p.sell_unit ? buyLine(p, 'unidade') : ''}` : ''}
+      ${p.in_stock ? `${p.sell_box ? buyLine(p, 'caixa') : ''}${p.sell_unit ? buyLine(p, 'unidade') : ''}` : ''}
     </div>`).join('');
   $$('.stepper', el).forEach((st) => {
     const p = productById(st.dataset.id);
@@ -246,19 +238,35 @@ function renderProductList() {
 }
 
 // ---------------- checkout ----------------
-function renderCheckout() {
+// Pergunta ao servidor quais itens não temos na quantidade pedida (a resposta não traz quantidades).
+async function cartUnavailable(lines) {
+  try {
+    const items = lines.map((l) => ({ product_id: l.p.id, unit_type: l.type, quantity: l.qty }));
+    return new Set((await api('/api/pedidos/verificar', { method: 'POST', body: { items } })).unavailable);
+  } catch {
+    return new Set();
+  }
+}
+
+function renderCheckout(unavailable = null) {
   const lines = cartLines();
   if (!lines.length) return renderCatalog();
   $('#cart-bar').classList.add('hidden');
   const total = lines.reduce((s, l) => s + l.subtotal, 0);
   const min = state.config.min_order_cents || 0;
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  window.scrollTo(0, 0);
+  const short = unavailable || new Set();
+  const blocked = (min && total < min) || short.size > 0;
+  // preserva o que o cliente já digitou ao redesenhar a tela
+  const prev = $('#form-checkout') ? formData($('#form-checkout')) : {};
+  if (!unavailable) window.scrollTo(0, 0);
   app.innerHTML = `
     <div class="section-head">
       <button class="btn-secondary" id="btn-back">← Continuar comprando</button>
       <h1>Revisar pedido</h1>
     </div>
+    ${short.size ? `<div class="alert alert-error">Não temos no momento a quantidade pedida dos itens marcados em vermelho.
+      Diminua a quantidade ou remova o item para enviar o pedido.</div>` : ''}
     <div class="grid grid-2" style="align-items:start">
       <div class="card">
         <div class="table-wrap">
@@ -266,9 +274,9 @@ function renderCheckout() {
             <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num hide-sm">Preço</th><th class="num">Subtotal</th><th></th></tr></thead>
             <tbody>
               ${lines.map((l) => `
-                <tr>
-                  <td>${esc(l.p.name)}<div class="small muted">${l.type === 'caixa' ? `Caixa (${l.p.units_per_box} un)` : 'Unidade'}</div></td>
-                  <td class="num">${l.qty}</td>
+                <tr class="${short.has(l.p.id) ? 'row-danger' : ''}">
+                  <td>${esc(l.p.name)}<div class="small ${short.has(l.p.id) ? '' : 'muted'}">${l.type === 'caixa' ? `Caixa (${l.p.units_per_box} un)` : 'Unidade'}${short.has(l.p.id) ? ' · quantidade indisponível' : ''}</div></td>
+                  <td class="num"><input type="number" min="0" inputmode="numeric" value="${l.qty}" data-qty="${cartKey(l.p.id, l.type)}" class="qty-input" aria-label="Quantidade"></td>
                   <td class="num nowrap hide-sm">${money(l.price)}</td>
                   <td class="num nowrap">${money(l.subtotal)}</td>
                   <td><button class="btn-danger btn-sm" data-remove="${cartKey(l.p.id, l.type)}" title="Remover">✕</button></td>
@@ -282,16 +290,21 @@ function renderCheckout() {
         <h2>Finalizar</h2>
         <p class="small muted">Pedido de <strong>${esc(state.customer.nome_fantasia || state.customer.razao_social)}</strong> · CNPJ ${esc(fmtCnpj(state.customer.cnpj))}</p>
         ${min && total < min ? `<div class="alert alert-warn">Pedido mínimo: <strong>${money(min)}</strong>. Faltam ${money(min - total)}.</div>` : ''}
-        <div class="field"><label>Data desejada de entrega/retirada</label><input type="date" name="delivery_date" min="${tomorrow}"></div>
-        <div class="field"><label>Observações</label><textarea name="notes" placeholder="Ex.: entregar pela manhã, retirar na loja…"></textarea></div>
-        <button type="submit" class="btn-block btn-ok" ${min && total < min ? 'disabled' : ''}>Enviar pedido · ${money(total)}</button>
+        <div class="field"><label>Data desejada de entrega/retirada</label><input type="date" name="delivery_date" min="${tomorrow}" value="${esc(prev.delivery_date || '')}"></div>
+        <div class="field"><label>Observações</label><textarea name="notes" placeholder="Ex.: entregar pela manhã, retirar na loja…">${esc(prev.notes || '')}</textarea></div>
+        <button type="submit" class="btn-block btn-ok" ${blocked ? 'disabled' : ''}>Enviar pedido · ${money(total)}</button>
       </form>
     </div>`;
   $('#btn-back').addEventListener('click', renderCatalog);
   $$('[data-remove]').forEach((b) => b.addEventListener('click', () => {
     delete state.cart[b.dataset.remove];
     saveCart();
-    renderCheckout();
+    refreshCheckout();
+  }));
+  $$('[data-qty]').forEach((inp) => inp.addEventListener('change', () => {
+    const [id, type] = inp.dataset.qty.split(':');
+    setQty(productById(id), type, inp.value);
+    refreshCheckout();
   }));
   const form = $('#form-checkout');
   form.addEventListener('submit', (e) => {
@@ -304,14 +317,22 @@ function renderCheckout() {
         saveCart();
         renderSuccess(r.order);
       } catch (err) {
-        if (err.status === 409) {
-          // estoque mudou: recarrega disponibilidade
+        if (err.status === 409 && err.data && err.data.unavailable) {
+          // estoque mudou desde a revisão: marca os itens e recarrega o catálogo
           state.products = (await api('/api/catalogo')).products;
+          renderCheckout(new Set(err.data.unavailable));
         }
         throw err;
       }
     });
   });
+  if (!unavailable) refreshCheckout();
+}
+
+async function refreshCheckout() {
+  const lines = cartLines();
+  if (!lines.length) return renderCatalog();
+  renderCheckout(await cartUnavailable(lines));
 }
 
 function renderSuccess(order) {
@@ -423,6 +444,6 @@ $('#btn-logout').addEventListener('click', async () => {
   state.customer = null;
   route();
 });
-$('#btn-checkout').addEventListener('click', renderCheckout);
+$('#btn-checkout').addEventListener('click', () => renderCheckout());
 
 boot();

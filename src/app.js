@@ -195,9 +195,8 @@ function createApp(db) {
     res.json({ customer: c ? publicCustomer(c) : null });
   });
 
+  // Catálogo do cliente: NÃO informa quantidades, só se o produto está disponível para compra.
   app.get('/api/catalogo', requireCustomer, (req, res) => {
-    const s = getSettings(db);
-    const showQty = s.show_stock_quantity === '1';
     const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1 ORDER BY p.category, p.name`)
       .all()
       .map(withAvailability)
@@ -213,10 +212,15 @@ function createApp(db) {
         sell_unit: !!p.sell_unit,
         sell_box: !!p.sell_box,
         image_url: imageUrl(p),
-        available_units: Math.max(0, p.available_units),
-        show_quantity: showQty,
+        // disponível = dá para comprar ao menos a menor embalagem vendida
+        in_stock: p.available_units >= (p.sell_unit ? 1 : p.units_per_box),
       }));
     res.json({ products });
+  });
+
+  // Confere o carrinho antes de enviar: devolve só os produtos sem a quantidade pedida.
+  app.post('/api/pedidos/verificar', requireCustomer, (req, res) => {
+    res.json({ unavailable: inv.unavailableProducts(req.body?.items) });
   });
 
   app.post('/api/pedidos', requireCustomer, (req, res) => {
@@ -507,6 +511,23 @@ function createApp(db) {
     res.type('text/csv').attachment(`estoque-${T.localDate()}.csv`).send(csv);
   });
 
+  // Excluir só produto que nunca teve movimentação nem pedido (o histórico é permanente).
+  admin.delete('/produtos/:id', (req, res) => {
+    const id = idParam(req);
+    const p = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+    if (!p) throw new BusinessError('Produto não encontrado.', 404);
+    const used = db.prepare(`SELECT (SELECT COUNT(*) FROM stock_movements WHERE product_id = ?)
+      + (SELECT COUNT(*) FROM order_items WHERE product_id = ?) AS n`).get(id, id).n;
+    if (used || p.stock_units) {
+      throw new BusinessError('Este produto já tem movimentações ou pedidos, e o histórico é permanente. Para tirá-lo do catálogo, desmarque “Ativo”.', 409);
+    }
+    db.transaction(() => {
+      db.prepare('DELETE FROM product_images WHERE product_id = ?').run(id);
+      db.prepare('DELETE FROM products WHERE id = ?').run(id);
+    })();
+    res.json({ ok: true });
+  });
+
   // ---------- admin: imagens e catálogo ----------
   const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
   admin.put('/produtos/:id/imagem', (req, res) => {
@@ -794,7 +815,7 @@ function createApp(db) {
   });
 
   // ---------- admin: configurações e usuários ----------
-  const EDITABLE_SETTINGS = ['store_name', 'store_subtitle', 'whatsapp', 'min_order_cents', 'auto_approve_customers', 'show_stock_quantity',
+  const EDITABLE_SETTINGS = ['store_name', 'store_subtitle', 'whatsapp', 'min_order_cents', 'auto_approve_customers',
     'order_notice', 'out_note_threshold_cents', 'default_supplier'];
 
   admin.get('/config', (req, res) => res.json({ settings: getSettings(db) }));
@@ -814,7 +835,7 @@ function createApp(db) {
       if (b[key] === undefined) continue;
       let value = String(b[key]).slice(0, 500);
       if (key === 'whatsapp') value = U.onlyDigits(value);
-      if (key === 'auto_approve_customers' || key === 'show_stock_quantity') value = b[key] === true || b[key] === '1' ? '1' : '0';
+      if (key === 'auto_approve_customers') value = b[key] === true || b[key] === '1' ? '1' : '0';
       upsert.run(key, value);
     }
     res.json({ settings: getSettings(db) });
@@ -907,7 +928,7 @@ function createApp(db) {
   // ---------- erros ----------
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
-    if (err instanceof BusinessError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof BusinessError) return res.status(err.status).json({ error: err.message, ...(err.details || {}) });
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Dados inválidos.' });
     if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Arquivo muito grande.' });
     if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'Registro duplicado (código, SKU ou CNPJ já existe).' });
