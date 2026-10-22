@@ -9,6 +9,27 @@ Sistema web para a loja receber **pedidos de clientes empresa (B2B)** por um lin
 
 ---
 
+## Perfis de acesso
+
+| Perfil | Onde entra | O que vê e faz |
+|---|---|---|
+| **Master** | `/admin` | Tudo: pedidos, estoque com custo e faturamento potencial, relatórios, **Financeiro (DRE e DFC)**, produtos, clientes, usuários e configurações. |
+| **Loja** | `/admin` | Só o **estoque da câmara em quantidades** (sem custos nem preços) e **Repor loja**: registra o que levou da câmara para a loja dele (vira uma transferência para aquela loja). |
+| **Cliente B2B** | `/` | Só o catálogo e os próprios pedidos. Não vê quantidades em estoque. |
+
+O master cria os usuários em **Config. → Usuários do painel** (perfil Loja exige escolher a loja) e pode desativar ou trocar a senha. Sempre existe ao menos um master ativo.
+
+## Financeiro: DRE e DFC (só master)
+
+Em **Financeiro**:
+
+- **Lançamentos:** receitas e despesas com conta, valor, **competência** (mês do resultado), vencimento e data de pagamento/recebimento (vazio = em aberto). Mostra o total a pagar e a receber em aberto.
+- **DRE gerencial** (competência), mês a mês: a venda B2B, o CMV, as perdas, os brindes/parcerias e a mercadoria enviada às lojas **vêm sozinhos do estoque**; o resto vem dos lançamentos, conforme a "linha da DRE" de cada conta. Enquanto as vendas do balcão não vêm do PDV, lance-as nas contas "Vendas Loja…"; a mercadoria enviada às lojas (a custo) faz o papel do CMV das lojas.
+- **DFC** (método direto, regime de caixa): só o que foi efetivamente pago/recebido, separado em atividades operacionais, de investimento e de financiamento, com saldo inicial e final. Informe o saldo de caixa inicial em **Plano de contas**.
+- **Plano de contas:** editável. "Recebimento de clientes B2B" e "Pagamento de notas de mercadoria" entram só no caixa, para não contar duas vezes na DRE.
+
+Exportação para Excel/CSV como os demais relatórios.
+
 ## Como o estoque funciona
 
 O estoque é sempre guardado em **unidades**. Cada produto tem "unidades por caixa", então o sistema mostra tudo como `3 cx + 5 un`.
@@ -37,7 +58,7 @@ A mercadoria que sai da câmara tem só quatro destinos: **venda B2B**, **transf
 | Venda B2B | Automática quando o pedido é **separado**. Grava o custo (CMV) e a receita. |
 | Transferência p/ loja | Saída para a **Loja 1 - Centro** ou a **Loja 2** (cadastre outras em Config.). Grava o preço de varejo do dia. |
 | Perda | Exige o **motivo**: vencimento, avaria/embalagem, descongelamento, divergência no recebimento, furto/extravio ou outros (com observação). Motivos editáveis em Config. |
-| Saída sem venda | Bonificação a cliente, amostra/degustação, consumo interno ou outros. Cliente opcional. |
+| Saída sem venda | Brinde, parceria/patrocínio, bonificação a cliente, amostra/degustação, doação, consumo interno ou outros (lista editável em Config.; alguns exigem observação). Cliente opcional. |
 | Sobra / Divergência de inventário | Lançadas pela contagem. Divergência (faltou) aparece nos relatórios junto das perdas, com nome próprio. |
 | Custo inicial | Dá valor a um produto que tem estoque mas não tem custo (ex.: dados de antes desta versão), sem mudar as unidades. |
 | Estorno | Desfaz um lançamento, pelo mesmo valor. Venda só se desfaz cancelando o pedido. |

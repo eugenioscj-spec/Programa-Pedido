@@ -18,6 +18,53 @@ const LOSS_REASONS = [
 ];
 const MIGRATED_REASON = 'Não informado (migrado)';
 
+// [chave, nome, exige observação]
+const NONSALE_TYPES = [
+  ['bonificacao_cliente', 'Bonificação a cliente', 0],
+  ['brinde', 'Brinde', 0],
+  ['parceria', 'Parceria / patrocínio', 1],
+  ['amostra_degustacao', 'Amostra / degustação', 0],
+  ['doacao', 'Doação', 1],
+  ['consumo_interno', 'Consumo interno', 0],
+  ['outros', 'Outros', 1],
+];
+
+// Plano de contas inicial: [nome, receita/despesa, linha da DRE (null = não entra na DRE), atividade na DFC]
+// Linhas da DRE: receita_bruta, deducoes, despesas_pessoal, despesas_ocupacao, despesas_comerciais,
+// despesas_administrativas, receitas_financeiras, despesas_financeiras, outras_receitas, outras_despesas, impostos_lucro.
+// Venda B2B, CMV, perdas, brindes e transferências vêm sozinhos do estoque — por isso "Recebimento de clientes B2B"
+// e "Pagamento de notas de mercadoria" só entram na DFC (caixa), para não contar duas vezes na DRE.
+const FIN_ACCOUNTS = [
+  ['Vendas Loja 1 - Centro', 'receita', 'receita_bruta', 'operacional'],
+  ['Vendas Loja 2', 'receita', 'receita_bruta', 'operacional'],
+  ['Outras vendas', 'receita', 'receita_bruta', 'operacional'],
+  ['Recebimento de clientes B2B', 'receita', null, 'operacional'],
+  ['Receitas financeiras', 'receita', 'receitas_financeiras', 'operacional'],
+  ['Outras receitas', 'receita', 'outras_receitas', 'operacional'],
+  ['Empréstimos e aportes recebidos', 'receita', null, 'financiamento'],
+  ['Impostos sobre vendas (Simples/ICMS)', 'despesa', 'deducoes', 'operacional'],
+  ['Devoluções e descontos concedidos', 'despesa', 'deducoes', 'operacional'],
+  ['Pagamento de notas de mercadoria', 'despesa', null, 'operacional'],
+  ['Salários e encargos', 'despesa', 'despesas_pessoal', 'operacional'],
+  ['Pró-labore', 'despesa', 'despesas_pessoal', 'operacional'],
+  ['Aluguel e condomínio', 'despesa', 'despesas_ocupacao', 'operacional'],
+  ['Energia elétrica', 'despesa', 'despesas_ocupacao', 'operacional'],
+  ['Água, internet e telefone', 'despesa', 'despesas_ocupacao', 'operacional'],
+  ['Royalties e taxas da franquia', 'despesa', 'despesas_comerciais', 'operacional'],
+  ['Fundo de propaganda / marketing', 'despesa', 'despesas_comerciais', 'operacional'],
+  ['Taxas de cartão e meios de pagamento', 'despesa', 'despesas_comerciais', 'operacional'],
+  ['Fretes e entregas', 'despesa', 'despesas_comerciais', 'operacional'],
+  ['Manutenção de equipamentos', 'despesa', 'despesas_administrativas', 'operacional'],
+  ['Contabilidade e sistemas', 'despesa', 'despesas_administrativas', 'operacional'],
+  ['Outras despesas administrativas', 'despesa', 'despesas_administrativas', 'operacional'],
+  ['Juros e tarifas bancárias', 'despesa', 'despesas_financeiras', 'operacional'],
+  ['Outras despesas', 'despesa', 'outras_despesas', 'operacional'],
+  ['IRPJ / CSLL', 'despesa', 'impostos_lucro', 'operacional'],
+  ['Compra de equipamentos', 'despesa', null, 'investimento'],
+  ['Pagamento de empréstimos', 'despesa', null, 'financiamento'],
+  ['Distribuição de lucros', 'despesa', null, 'financiamento'],
+];
+
 const MOVEMENT_TYPES = [
   'entrada', 'saida_pedido', 'transferencia', 'perda', 'saida_sem_venda',
   'sobra_inventario', 'divergencia_inventario', 'abertura_custo', 'estorno',
@@ -201,6 +248,66 @@ const MIGRATIONS = [
       db.exec(`DELETE FROM products WHERE id IN (${list})`);
     },
   },
+  {
+    version: 4,
+    name: 'Perfis de usuário (master/loja), tipos de saída sem venda editáveis e financeiro (DRE/DFC)',
+    up(db) {
+      // ---- perfis: quem já existia vira master
+      const cols = db.prepare('PRAGMA table_info(admins)').all().map((c) => c.name);
+      if (!cols.includes('role')) db.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'master'");
+      if (!cols.includes('location_id')) db.exec('ALTER TABLE admins ADD COLUMN location_id INTEGER REFERENCES locations(id)');
+      if (!cols.includes('active')) db.exec('ALTER TABLE admins ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+
+      // ---- tipos de saída sem venda (antes fixos no código)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS nonsale_types (
+          key           TEXT PRIMARY KEY,
+          label         TEXT NOT NULL,
+          requires_note INTEGER NOT NULL DEFAULT 0,
+          active        INTEGER NOT NULL DEFAULT 1,
+          sort          INTEGER NOT NULL DEFAULT 0
+        );
+      `);
+      const insType = db.prepare('INSERT OR IGNORE INTO nonsale_types (key, label, requires_note, sort) VALUES (?, ?, ?, ?)');
+      NONSALE_TYPES.forEach(([key, label, note], i) => insType.run(key, label, note, i + 1));
+
+      // ---- financeiro: plano de contas e lançamentos
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fin_accounts (
+          id           INTEGER PRIMARY KEY,
+          name         TEXT NOT NULL UNIQUE,
+          kind         TEXT NOT NULL CHECK (kind IN ('receita', 'despesa')),
+          dre_group    TEXT,
+          dfc_activity TEXT CHECK (dfc_activity IS NULL OR dfc_activity IN ('operacional', 'investimento', 'financiamento')),
+          active       INTEGER NOT NULL DEFAULT 1,
+          sort         INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS fin_entries (
+          id              INTEGER PRIMARY KEY,
+          account_id      INTEGER NOT NULL REFERENCES fin_accounts(id),
+          description     TEXT NOT NULL,
+          amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+          competence_date TEXT NOT NULL,
+          due_date        TEXT,
+          paid_date       TEXT,
+          location_id     INTEGER REFERENCES locations(id),
+          counterparty    TEXT,
+          document        TEXT,
+          note            TEXT,
+          created_by      TEXT,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_fin_competence ON fin_entries(competence_date);
+        CREATE INDEX IF NOT EXISTS idx_fin_paid ON fin_entries(paid_date);
+      `);
+      const insAcc = db.prepare('INSERT OR IGNORE INTO fin_accounts (name, kind, dre_group, dfc_activity, sort) VALUES (?, ?, ?, ?, ?)');
+      FIN_ACCOUNTS.forEach(([name, kind, dre, dfc], i) => insAcc.run(name, kind, dre, dfc, i + 1));
+
+      const setDefault = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+      setDefault.run('cash_opening_cents', '0');
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -249,4 +356,4 @@ function runMigrations(db, file, { log = console.log } = {}) {
   return { from, to: version, backup };
 }
 
-module.exports = { runMigrations, LATEST_VERSION, MOVEMENT_TYPES, MIGRATED_REASON };
+module.exports = { runMigrations, LATEST_VERSION, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };

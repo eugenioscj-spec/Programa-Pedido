@@ -15,11 +15,11 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD) {
   const email = ADMIN_EMAIL.trim();
   const existing = db.prepare('SELECT id FROM admins WHERE email = ?').get(email);
   if (existing) {
-    db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(ADMIN_PASSWORD), existing.id);
+    db.prepare("UPDATE admins SET password_hash = ?, role = 'master', active = 1 WHERE id = ?").run(hashPassword(ADMIN_PASSWORD), existing.id);
     db.prepare("DELETE FROM sessions WHERE user_type = 'admin' AND user_id = ?").run(existing.id);
     console.log(`Senha do administrador ${email} redefinida.`);
   } else {
-    db.prepare('INSERT INTO admins (name, email, password_hash) VALUES (?, ?, ?)')
+    db.prepare("INSERT INTO admins (name, email, password_hash, role) VALUES (?, ?, ?, 'master')")
       .run(ADMIN_NAME || 'Administrador', email, hashPassword(ADMIN_PASSWORD));
     console.log(`Administrador ${email} criado.`);
   }

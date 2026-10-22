@@ -63,7 +63,12 @@ async function guard(fn) {
   }
 }
 
+const STORE_VIEWS = ['loja-estoque', 'loja-repor'];
+const isMaster = () => A.admin && A.admin.role === 'master';
+
 function setView(view) {
+  if (!isMaster() && !STORE_VIEWS.includes(view)) view = 'loja-estoque';
+  if (isMaster() && STORE_VIEWS.includes(view)) view = 'painel';
   A.view = view;
   $$('#nav [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   closeModal();
@@ -74,6 +79,9 @@ function setView(view) {
     estoque: renderStock,
     movimentos: renderMovements,
     relatorios: renderReports,
+    financeiro: renderFinance,
+    'loja-estoque': renderStoreStock,
+    'loja-repor': renderRestock,
     produtos: renderProducts,
     clientes: renderCustomers,
     config: renderConfig,
@@ -363,7 +371,7 @@ const SCAN_TYPES = {
   entrada: { label: 'Entrada (nota)', help: 'Mercadoria chegando na câmara. Informe o custo de cada item (por caixa ou por unidade).', button: 'Confirmar entrada' },
   transferencia: { label: 'Transferência p/ loja', help: 'Produtos que saem da câmara para uma loja.', button: 'Confirmar transferência' },
   perda: { label: 'Perda', help: 'Produto perdido: escolha o motivo.', button: 'Registrar perda' },
-  saida_sem_venda: { label: 'Saída sem venda', help: 'Bonificação a cliente, amostra/degustação, consumo interno…', button: 'Registrar saída' },
+  saida_sem_venda: { label: 'Brinde / parceria / outras', help: 'Saída sem venda: brinde, parceria, bonificação a cliente, amostra, doação, consumo interno…', button: 'Registrar saída' },
   inventario: { label: 'Inventário (contagem)', help: 'Conte o estoque físico: o sistema lança a sobra ou a divergência dos produtos contados.', button: 'Aplicar contagem' },
 };
 
@@ -395,7 +403,7 @@ function scanHeaderFields() {
   if (scanType === 'saida_sem_venda') {
     return `
       <div class="field"><label for="scan-subtype">Tipo *</label><select id="scan-subtype"><option value="">Escolha…</option>
-        ${o.subtypes.map((s) => `<option value="${s.value}">${esc(s.label)}</option>`).join('')}</select></div>
+        ${o.subtypes.map((s) => `<option value="${s.value}">${esc(s.label)}${s.requires_note ? ' (exige observação)' : ''}</option>`).join('')}</select></div>
       <div class="field"><label for="scan-customer">Cliente (opcional)</label><select id="scan-customer"><option value="">—</option>
         ${o.customers.map((c) => `<option value="${c.id}">${esc(c.nome_fantasia || c.razao_social)}</option>`).join('')}</select></div>
       ${note}`;
@@ -622,14 +630,21 @@ async function renderStock() {
   await loadProducts();
   const uncosted = A.products.filter((p) => p.stock_units > 0 && !p.has_cost).length;
   const totalCost = A.products.reduce((s, p) => s + (p.has_cost ? p.stock_value_cents : 0), 0);
+  const totalB2b = A.products.reduce((s, p) => s + p.stock_units * p.unit_price_cents, 0);
+  const totalRetail = A.products.reduce((s, p) => s + p.stock_units * (p.retail_price_cents ?? p.unit_price_cents), 0);
+  const totalUnits = A.products.reduce((s, p) => s + p.stock_units, 0);
   app.innerHTML = `
     <div class="section-head"><h1>Estoque da câmara</h1><span class="spacer"></span>
       <input type="search" id="stock-search" placeholder="Buscar…" style="max-width:240px" value="${esc(stockSearch)}">
       <button class="btn-secondary" id="btn-stock-csv">Exportar planilha</button>
       ${uncosted ? `<button class="btn-secondary" id="btn-opening">Informar custo inicial (${uncosted})</button>` : ''}
       <button id="btn-count">Fazer inventário</button></div>
-    <p class="small muted">Físico = o que está na câmara. Reservado = pedidos novos/confirmados ainda não separados. Disponível = o que o cliente consegue pedir.
-      Valor a custo total: <strong>${money(totalCost)}</strong>.</p>
+    <div class="grid grid-4" style="margin-bottom:14px">
+      <div class="card stat"><div class="label">Estoque a custo</div><div class="value">${money(totalCost)}</div><div class="small muted">${totalUnits.toLocaleString('pt-BR')} un na câmara</div></div>
+      <div class="card stat"><div class="label">Faturamento potencial (B2B)</div><div class="value">${money(totalB2b)}</div><div class="small muted">${money(totalB2b - totalCost)} acima do custo</div></div>
+      <div class="card stat"><div class="label">Faturamento potencial (varejo)</div><div class="value">${money(totalRetail)}</div><div class="small muted">se tudo fosse vendido no balcão</div></div>
+    </div>
+    <p class="small muted">Físico = o que está na câmara. Reservado = pedidos novos/confirmados ainda não separados. Disponível = o que o cliente consegue pedir.</p>
     <div class="card" style="padding:0"><div class="table-wrap"><table>
       <thead><tr><th>Produto</th><th class="num">Físico</th><th class="num hide-sm">Reservado</th><th class="num">Disponível</th>
         <th class="num">Custo médio</th><th class="num">Valor a custo</th><th></th><th></th></tr></thead>
@@ -1087,9 +1102,11 @@ function openCustomerForm(c) {
 
 // ======================= CONFIGURAÇÕES =======================
 async function renderConfig() {
-  const [{ settings: s }, { admins }, { locations }, { reasons }] = await Promise.all([
-    api('/api/admin/config'), api('/api/admin/usuarios'), api('/api/admin/locais'), api('/api/admin/motivos'),
+  const [{ settings: s }, { admins }, { locations }, { reasons }, { types }] = await Promise.all([
+    api('/api/admin/config'), api('/api/admin/usuarios'), api('/api/admin/locais'), api('/api/admin/motivos'), api('/api/admin/tipos-saida'),
   ]);
+  const stores = locations.filter((l) => l.kind === 'loja' && l.active);
+  const storeOptions = (sel) => stores.map((l) => `<option value="${l.id}" ${l.id === sel ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
   app.innerHTML = `
     <div class="section-head"><h1>Configurações</h1></div>
     <div class="grid grid-2" style="align-items:start">
@@ -1128,6 +1145,17 @@ async function renderConfig() {
           <form id="form-reason" class="row" style="margin-top:10px"><input name="name" class="grow" placeholder="Novo motivo" required>
             <label class="check small"><input type="checkbox" name="requires_note"> exige obs.</label><button type="submit" class="btn-secondary">+ Adicionar</button></form>
         </div>
+        <div class="card">
+          <h2>Saídas sem venda (brinde, parceria…)</h2>
+          <div class="table-wrap"><table><tbody>${types.map((t) => `
+            <tr ${t.active ? '' : 'style="opacity:.5"'}><td><input value="${esc(t.label)}" data-st-name="${esc(t.key)}"></td>
+              <td><label class="check small"><input type="checkbox" data-st-note="${esc(t.key)}" ${t.requires_note ? 'checked' : ''}> exige obs.</label></td>
+              <td class="nowrap"><button class="btn-secondary btn-sm" data-st-save="${esc(t.key)}">Salvar</button>
+                <button class="btn-secondary btn-sm" data-st-toggle="${esc(t.key)}" data-active="${t.active}">${t.active ? 'Desativar' : 'Ativar'}</button></td></tr>`).join('')}
+          </tbody></table></div>
+          <form id="form-stype" class="row" style="margin-top:10px"><input name="label" class="grow" placeholder="Novo tipo (ex.: Evento)" required>
+            <label class="check small"><input type="checkbox" name="requires_note"> exige obs.</label><button type="submit" class="btn-secondary">+ Adicionar</button></form>
+        </div>
       </div>
       <div>
         <form class="card" id="form-pass">
@@ -1138,12 +1166,22 @@ async function renderConfig() {
         </form>
         <div class="card">
           <h2>Usuários do painel</h2>
-          <ul>${admins.map((a) => `<li>${esc(a.name)} <span class="muted small">${esc(a.email)}</span></li>`).join('')}</ul>
-          <form id="form-user">
+          <p class="small muted"><strong>Master</strong>: acesso a tudo (custos, financeiro, configurações).
+            <strong>Loja</strong>: vê o estoque da câmara (sem valores) e registra a reposição da própria loja.</p>
+          <div class="table-wrap"><table><tbody>${admins.map((a) => `
+            <tr ${a.active ? '' : 'style="opacity:.5"'}>
+              <td>${esc(a.name)}<div class="small muted">${esc(a.email)}</div></td>
+              <td><span class="tag ${a.role === 'master' ? 'tag-confirmado' : 'tag-novo'}">${a.role === 'master' ? 'Master' : `Loja · ${esc(a.location_name || '?')}`}</span>
+                ${a.active ? '' : '<span class="tag tag-cancelado">desativado</span>'}</td>
+              <td class="nowrap"><button class="btn-secondary btn-sm" data-user="${a.id}">Editar</button></td>
+            </tr>`).join('')}</tbody></table></div>
+          <form id="form-user" style="margin-top:12px">
             <div class="form-grid">
               <div class="field"><label>Nome</label><input name="name" required></div>
               <div class="field"><label>E-mail</label><input name="email" type="email" required></div>
               <div class="field"><label>Senha (mín. 8)</label><input name="senha" type="text" minlength="8" required autocomplete="off"></div>
+              <div class="field"><label>Perfil</label><select name="role" id="new-role"><option value="loja">Loja</option><option value="master">Master</option></select></div>
+              <div class="field" id="new-loc-field"><label>Loja</label><select name="location_id">${storeOptions(stores[0]?.id)}</select></div>
             </div>
             <button type="submit" class="btn-secondary">+ Adicionar usuário</button>
           </form>
@@ -1192,6 +1230,51 @@ async function renderConfig() {
     method: 'PUT', body: { name: $(`[data-rs-name="${b.dataset.rsSave}"]`).value, requires_note: $(`[data-rs-note="${b.dataset.rsSave}"]`).checked },
   }));
   act('[data-rs-toggle]', (b) => api(`/api/admin/motivos/${b.dataset.rsToggle}`, { method: 'PUT', body: { active: b.dataset.active !== '1' } }));
+  act('[data-st-save]', (b) => api(`/api/admin/tipos-saida/${encodeURIComponent(b.dataset.stSave)}`, {
+    method: 'PUT', body: { label: $(`[data-st-name="${b.dataset.stSave}"]`).value, requires_note: $(`[data-st-note="${b.dataset.stSave}"]`).checked },
+  }));
+  act('[data-st-toggle]', (b) => api(`/api/admin/tipos-saida/${encodeURIComponent(b.dataset.stToggle)}`, { method: 'PUT', body: { active: b.dataset.active !== '1' } }));
+  onSubmit('#form-stype', async (data) => {
+    await api('/api/admin/tipos-saida', { method: 'POST', body: data });
+    toast('Tipo adicionado.', 'ok');
+    renderConfig();
+  });
+  const roleSel = $('#new-role');
+  const syncRole = () => $('#new-loc-field').classList.toggle('hidden', roleSel.value !== 'loja');
+  roleSel.addEventListener('change', syncRole);
+  syncRole();
+  $$('[data-user]').forEach((b) => b.addEventListener('click', () => openUserForm(admins.find((a) => a.id === Number(b.dataset.user)), storeOptions)));
+}
+
+function openUserForm(u, storeOptions) {
+  const m = openModal(`
+    <div class="modal-head"><h2>Usuário: ${esc(u.name)}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-edit-user">
+      <div class="form-grid">
+        <div class="field"><label>Nome</label><input name="name" value="${esc(u.name)}" required></div>
+        <div class="field"><label>Perfil</label><select name="role" id="edit-role">
+          <option value="master" ${u.role === 'master' ? 'selected' : ''}>Master</option><option value="loja" ${u.role === 'loja' ? 'selected' : ''}>Loja</option></select></div>
+        <div class="field" id="edit-loc-field"><label>Loja</label><select name="location_id">${storeOptions(u.location_id)}</select></div>
+        <div class="field"><label>Nova senha (vazio = manter)</label><input name="senha" type="text" minlength="8" autocomplete="off"></div>
+      </div>
+      <label class="check" style="margin-bottom:12px"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Ativo (pode entrar no painel)</label>
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const sel = $('#edit-role', m);
+  const sync = () => $('#edit-loc-field', m).classList.toggle('hidden', sel.value !== 'loja');
+  sel.addEventListener('change', sync);
+  sync();
+  const form = $('#form-edit-user', m);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitWith(form, async (data) => {
+      if (!data.senha) delete data.senha;
+      await api(`/api/admin/usuarios/${u.id}`, { method: 'PUT', body: data });
+      toast('Usuário salvo.', 'ok');
+      closeModal();
+      renderConfig();
+    });
+  });
 }
 
 // ======================= RELATÓRIOS =======================
@@ -1224,6 +1307,9 @@ function reportCell(col, row) {
   }
 }
 
+// _class das linhas: 'danger' (vermelho) e, no financeiro, 'sub', 'total', 'strong'.
+const rowClass = (c) => String(c || '').split(' ').filter(Boolean).map((k) => (k === 'danger' ? 'row-danger' : `r-${k}`)).join(' ');
+
 function reportTable(sec) {
   const right = (c) => (c.type === 'text' ? '' : 'num nowrap');
   return `
@@ -1231,7 +1317,7 @@ function reportTable(sec) {
       <h2>${esc(sec.title)}</h2>
       ${sec.rows.length ? `<div class="table-wrap"><table>
         <thead><tr>${sec.columns.map((c) => `<th class="${right(c)}">${esc(c.label)}</th>`).join('')}</tr></thead>
-        <tbody>${sec.rows.map((r) => `<tr class="${r._class === 'danger' ? 'row-danger' : ''}">${sec.columns.map((c) => `<td class="${right(c)}">${reportCell(c, r)}</td>`).join('')}</tr>`).join('')}</tbody>
+        <tbody>${sec.rows.map((r) => `<tr class="${rowClass(r._class)}">${sec.columns.map((c) => `<td class="${right(c)}">${reportCell(c, r)}</td>`).join('')}</tr>`).join('')}</tbody>
         ${sec.total ? `<tfoot><tr class="total-row">${sec.columns.map((c, i) => `<td class="${right(c)}">${i === 0 ? 'Total' : reportCell(c, sec.total)}</td>`).join('')}</tr></tfoot>` : ''}
       </table></div>` : '<p class="muted">Nada no período.</p>'}
     </div>`;
@@ -1286,6 +1372,325 @@ async function renderReports() {
     ${report.sections.map(reportTable).join('')}`;
 }
 
+// ======================= USUÁRIO DA LOJA =======================
+let storeSearch = '';
+async function renderStoreStock() {
+  const { products, location: loc } = await api('/api/admin/loja/estoque');
+  A.products = products;
+  app.innerHTML = `
+    <div class="section-head"><h1>Estoque da câmara</h1><span class="spacer"></span>
+      <input type="search" id="store-search" placeholder="Buscar produto…" style="max-width:260px" value="${esc(storeSearch)}">
+      <button id="btn-go-restock">Repor ${esc(loc || 'loja')}</button></div>
+    <p class="small muted">Quantidades na câmara agora. “Reservado” são pedidos de clientes ainda não separados: não use esses produtos para repor a loja.</p>
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th></th><th>Produto</th><th class="num">Na câmara</th><th class="num hide-sm">Reservado</th><th class="num">Livre para repor</th></tr></thead>
+      <tbody id="store-body"></tbody></table></div></div>`;
+  const draw = () => {
+    const term = storeSearch.toLowerCase();
+    const list = products.filter((p) => !term || p.name.toLowerCase().includes(term) || p.category.toLowerCase().includes(term) || (p.barcode || '').includes(term));
+    $('#store-body').innerHTML = list.map((p) => `
+      <tr ${p.stock_units ? '' : 'style="opacity:.55"'}>
+        <td style="width:52px">${thumb(p)}</td>
+        <td>${esc(p.name)}<div class="small muted">${esc(p.category)}</div></td>
+        <td class="num nowrap">${boxesLabel(p.stock_units, p.units_per_box)}</td>
+        <td class="num nowrap hide-sm">${p.reserved_units ? boxesLabel(p.reserved_units, p.units_per_box) : '—'}</td>
+        <td class="num nowrap"><strong>${boxesLabel(Math.max(0, p.available_units), p.units_per_box)}</strong></td>
+      </tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum produto.</td></tr>';
+  };
+  draw();
+  $('#store-search').addEventListener('input', (e) => { storeSearch = e.target.value; draw(); });
+  $('#btn-go-restock').addEventListener('click', () => setView('loja-repor'));
+}
+
+let restockLines = [];
+async function renderRestock() {
+  const [{ products, location: loc }, { movements }] = await Promise.all([api('/api/admin/loja/estoque'), api('/api/admin/loja/reposicoes')]);
+  A.products = products;
+  app.innerHTML = `
+    <div class="section-head"><h1>Repor ${esc(loc || 'loja')}</h1></div>
+    <div class="card">
+      <p class="muted" style="margin-top:0">Bipe o que você está levando da câmara para a loja (o código da caixa conta a caixa inteira), ou digite o nome do produto e Enter.</p>
+      <input class="scan-input" id="rs-scan" placeholder="Bipe o código de barras ou digite o nome" autocomplete="off">
+      <div id="rs-picker"></div>
+      <div class="table-wrap" style="margin-top:14px"><table>
+        <thead><tr><th>Produto</th><th class="num">Caixas</th><th class="num">Unid.</th><th class="num">Total un</th><th></th></tr></thead>
+        <tbody id="rs-body"></tbody>
+      </table></div>
+      <div class="field" style="margin-top:12px"><label for="rs-note">Observação</label><input id="rs-note" placeholder="Opcional"></div>
+      <div class="row"><button class="btn-ok" id="rs-confirm">Confirmar reposição</button><button class="btn-secondary" id="rs-clear">Limpar lista</button></div>
+    </div>
+    <div class="card">
+      <h2>Últimas reposições</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Data</th><th>Produto</th><th class="num">Qtd</th><th class="hide-sm">Por</th></tr></thead>
+        <tbody>${movements.slice(0, 50).map((m) => `
+          <tr ${m.reversed ? 'style="opacity:.5"' : ''}><td class="nowrap">${fmtDate(m.created_at)}</td><td>${esc(m.product_name)}${m.reversed ? ' <span class="tag tag-cancelado">estornado</span>' : ''}</td>
+            <td class="num nowrap">${boxesLabel(-m.quantity, m.units_per_box)}</td><td class="hide-sm small">${esc(m.created_by || '')}</td></tr>`).join('')
+          || '<tr><td colspan="4" class="empty">Nenhuma reposição ainda.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+  const draw = (hl) => {
+    $('#rs-body').innerHTML = restockLines.map((l, i) => {
+      const p = productById(l.product_id);
+      const cx = Math.floor(l.units / p.units_per_box);
+      const over = l.units > Math.max(0, p.available_units);
+      return `<tr ${l.product_id === hl ? 'style="background:var(--ok-soft)"' : ''} class="${over ? 'row-danger' : ''}">
+        <td>${esc(p.name)}<div class="small ${over ? '' : 'muted'}">${over ? `só há ${boxesLabel(Math.max(0, p.available_units), p.units_per_box)} livre na câmara` : `Caixa c/ ${p.units_per_box} un`}</div></td>
+        <td class="num"><input type="number" min="0" class="qty-input" data-rcx="${i}" value="${cx}" ${p.units_per_box <= 1 ? 'disabled' : ''}></td>
+        <td class="num"><input type="number" min="0" class="qty-input" data-run="${i}" value="${l.units - cx * p.units_per_box}"></td>
+        <td class="num"><strong>${l.units}</strong></td>
+        <td><button class="btn-danger btn-sm" data-rdel="${i}">✕</button></td></tr>`;
+    }).join('') || '<tr><td colspan="5" class="empty">Nenhum item. Bipe o primeiro produto.</td></tr>';
+    const upd = (i) => {
+      const p = productById(restockLines[i].product_id);
+      restockLines[i].units = Math.max(0, Number($(`[data-rcx="${i}"]`).value) || 0) * p.units_per_box + Math.max(0, Number($(`[data-run="${i}"]`).value) || 0);
+      draw();
+    };
+    $$('[data-rcx]').forEach((x) => x.addEventListener('change', () => upd(Number(x.dataset.rcx))));
+    $$('[data-run]').forEach((x) => x.addEventListener('change', () => upd(Number(x.dataset.run))));
+    $$('[data-rdel]').forEach((x) => x.addEventListener('click', () => { restockLines.splice(Number(x.dataset.rdel), 1); draw(); }));
+  };
+  const addUnits = (p, units) => {
+    let l = restockLines.find((x) => x.product_id === p.id);
+    if (!l) { l = { product_id: p.id, units: 0 }; restockLines.unshift(l); }
+    l.units += units;
+    draw(p.id);
+  };
+  draw();
+  const scan = $('#rs-scan');
+  scan.focus();
+  scan.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const term = scan.value.trim();
+    scan.value = '';
+    $('#rs-picker').innerHTML = '';
+    if (!term) return;
+    const exact = products.find((p) => p.barcode === term || p.box_barcode === term || p.sku === term);
+    if (exact) { beep(true); addUnits(exact, exact.box_barcode === term ? exact.units_per_box : 1); return; }
+    const matches = products.filter((p) => p.name.toLowerCase().includes(term.toLowerCase()));
+    if (matches.length === 1) { addUnits(matches[0], 0); return; }
+    if (!matches.length) { beep(false); toast(`Nada encontrado para "${term}".`, 'error'); return; }
+    $('#rs-picker').innerHTML = `<div class="chips" style="margin-top:10px">${matches.slice(0, 30).map((p) => `<button class="chip" data-rpick="${p.id}">${esc(p.name)}</button>`).join('')}</div>`;
+    $$('[data-rpick]').forEach((b) => b.addEventListener('click', () => { addUnits(productById(b.dataset.rpick), 0); $('#rs-picker').innerHTML = ''; scan.focus(); }));
+  });
+  $('#rs-clear').addEventListener('click', () => { restockLines = []; draw(); });
+  $('#rs-confirm').addEventListener('click', () => guard(async () => {
+    const lines = restockLines.filter((l) => l.units > 0);
+    if (!lines.length) return toast('Informe as quantidades.', 'error');
+    const total = lines.reduce((s, l) => s + l.units, 0);
+    if (!confirm(`Confirmar reposição de ${lines.length} produto(s), ${total} unidades, para ${loc || 'a loja'}?`)) return;
+    await api('/api/admin/loja/reposicao', { method: 'POST', body: { lines, note: $('#rs-note').value } });
+    toast('Reposição registrada!', 'ok');
+    restockLines = [];
+    renderRestock();
+  }));
+}
+
+// ======================= FINANCEIRO (DRE / DFC) =======================
+const F = { tab: 'lancamentos', from: null, to: null, campo: 'competencia', status: '', kind: '', opts: null };
+
+async function renderFinance() {
+  if (!F.from) [F.from, F.to] = monthRange(0);
+  F.opts = await api('/api/admin/financeiro/opcoes');
+  const tabs = { lancamentos: 'Lançamentos', dre: 'DRE', dfc: 'DFC (caixa)', contas: 'Plano de contas' };
+  app.innerHTML = `
+    <div class="section-head"><h1>Financeiro</h1><span class="spacer"></span>
+      ${F.tab === 'lancamentos' ? '<button id="btn-new-entry">+ Novo lançamento</button>' : ''}</div>
+    <div class="chips">${Object.entries(tabs).map(([k, v]) => `<button class="chip ${k === F.tab ? 'active' : ''}" data-ft="${k}">${v}</button>`).join('')}</div>
+    ${F.tab !== 'contas' ? `
+    <form class="card" id="fin-filter"><div class="row">
+      ${F.tab === 'lancamentos' ? `<div class="field"><label>Período por</label><select id="f-campo">
+        <option value="competencia" ${F.campo === 'competencia' ? 'selected' : ''}>Competência</option>
+        <option value="vencimento" ${F.campo === 'vencimento' ? 'selected' : ''}>Vencimento</option>
+        <option value="pagamento" ${F.campo === 'pagamento' ? 'selected' : ''}>Pagamento</option></select></div>` : ''}
+      <div class="field"><label for="f-from">De</label><input type="date" id="f-from" value="${F.from}"></div>
+      <div class="field"><label for="f-to">Até</label><input type="date" id="f-to" value="${F.to}"></div>
+      ${F.tab === 'lancamentos' ? `<div class="field"><label>Situação</label><select id="f-status">
+        <option value="">Todos</option><option value="aberto" ${F.status === 'aberto' ? 'selected' : ''}>Em aberto</option><option value="pago" ${F.status === 'pago' ? 'selected' : ''}>Pagos</option></select></div>
+        <div class="field"><label>Tipo</label><select id="f-kind"><option value="">Receitas e despesas</option>
+        <option value="receita" ${F.kind === 'receita' ? 'selected' : ''}>Receitas</option><option value="despesa" ${F.kind === 'despesa' ? 'selected' : ''}>Despesas</option></select></div>` : ''}
+      <div class="field"><label>&nbsp;</label><div class="row">
+        <button type="button" class="btn-secondary btn-sm" data-fp="0">Este mês</button>
+        <button type="button" class="btn-secondary btn-sm" data-fp="-1">Mês passado</button>
+        <button type="button" class="btn-secondary btn-sm" data-fp="year">Este ano</button></div></div>
+      <span class="grow"></span>
+      <div class="field"><label>&nbsp;</label><div class="row"><button type="submit">Atualizar</button>
+        ${F.tab !== 'lancamentos' ? '<button type="button" class="btn-secondary" data-fexp="xlsx">Excel</button><button type="button" class="btn-secondary" data-fexp="csv">CSV</button>' : ''}</div></div>
+    </div></form>` : ''}
+    <div id="fin-body"><div class="empty">Carregando…</div></div>`;
+  $$('[data-ft]').forEach((b) => b.addEventListener('click', () => { F.tab = b.dataset.ft; guard(renderFinance); }));
+  const filter = $('#fin-filter');
+  if (filter) {
+    filter.addEventListener('submit', (e) => {
+      e.preventDefault();
+      F.from = $('#f-from').value; F.to = $('#f-to').value;
+      if ($('#f-campo')) { F.campo = $('#f-campo').value; F.status = $('#f-status').value; F.kind = $('#f-kind').value; }
+      guard(renderFinance);
+    });
+    $$('[data-fp]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.fp === 'year') [F.from, F.to] = [`${todayLocal().slice(0, 4)}-01-01`, todayLocal()];
+      else [F.from, F.to] = monthRange(Number(b.dataset.fp));
+      guard(renderFinance);
+    }));
+    $$('[data-fexp]').forEach((b) => b.addEventListener('click', () => downloadUrl(`/api/admin/relatorios/${F.tab}?from=${F.from}&to=${F.to}&formato=${b.dataset.fexp}`)));
+  }
+  const nb = $('#btn-new-entry');
+  if (nb) nb.addEventListener('click', () => openEntryForm(null));
+  if (F.tab === 'lancamentos') return renderEntries();
+  if (F.tab === 'contas') return renderAccounts();
+  const { report } = await api(`/api/admin/relatorios/${F.tab}?from=${F.from}&to=${F.to}`);
+  $('#fin-body').innerHTML = `
+    <div class="report-head"><h2>${esc(report.title)}</h2><p class="small muted">${esc(report.subtitle || '')}</p></div>
+    ${(report.warnings || []).map((w) => `<div class="alert alert-info small">${esc(w)}</div>`).join('')}
+    ${report.sections.map(reportTable).join('')}`;
+}
+
+async function renderEntries() {
+  const qs = new URLSearchParams({ from: F.from, to: F.to, campo: F.campo, status: F.status, kind: F.kind }).toString();
+  const { entries, open } = await api(`/api/admin/financeiro/lancamentos?${qs}`);
+  const sign = (e) => (e.kind === 'receita' ? 1 : -1);
+  const net = entries.reduce((s, e) => s + sign(e) * e.amount_cents, 0);
+  $('#fin-body').innerHTML = `
+    <div class="grid grid-4" style="margin-bottom:16px">
+      <div class="card stat"><div class="label">A receber (em aberto)</div><div class="value qty-pos">${money(open.receita || 0)}</div></div>
+      <div class="card stat"><div class="label">A pagar (em aberto)</div><div class="value qty-neg">${money(open.despesa || 0)}</div></div>
+      <div class="card stat"><div class="label">Saldo dos lançamentos listados</div><div class="value">${money(net)}</div><div class="small muted">${entries.length} lançamento(s)</div></div>
+    </div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>${F.campo === 'pagamento' ? 'Pago em' : F.campo === 'vencimento' ? 'Vencimento' : 'Competência'}</th><th>Conta</th><th>Descrição</th><th class="num">Valor</th>
+        <th class="hide-sm">Vencimento</th><th>Situação</th><th></th></tr></thead>
+      <tbody>${entries.map((e) => `
+        <tr>
+          <td class="nowrap">${fmtDate(F.campo === 'pagamento' ? e.paid_date : F.campo === 'vencimento' ? e.due_date : e.competence_date, false)}</td>
+          <td>${esc(e.account_name)}${e.location_name ? `<div class="small muted">${esc(e.location_name)}</div>` : ''}</td>
+          <td>${esc(e.description)}${e.counterparty ? `<div class="small muted">${esc(e.counterparty)}</div>` : ''}</td>
+          <td class="num nowrap ${e.kind === 'receita' ? 'qty-pos' : 'qty-neg'}">${e.kind === 'receita' ? '' : '−'}${money(e.amount_cents)}</td>
+          <td class="hide-sm nowrap">${e.due_date ? fmtDate(e.due_date, false) : '—'}</td>
+          <td>${e.paid_date ? `<span class="tag tag-entregue">${e.kind === 'receita' ? 'recebido' : 'pago'} ${fmtDate(e.paid_date, false)}</span>`
+            : `<button class="btn-ok btn-sm" data-pay="${e.id}">${e.kind === 'receita' ? 'Recebido hoje' : 'Pago hoje'}</button>`}</td>
+          <td class="nowrap"><button class="btn-secondary btn-sm" data-edit-entry="${e.id}">Editar</button></td>
+        </tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhum lançamento no período. Use “+ Novo lançamento”.</td></tr>'}</tbody>
+    </table></div></div>`;
+  $$('[data-pay]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/financeiro/lancamentos/${b.dataset.pay}/pagar`, { method: 'POST', body: {} });
+    toast('Baixa registrada.', 'ok');
+    renderEntries();
+  })));
+  $$('[data-edit-entry]').forEach((b) => b.addEventListener('click', () => openEntryForm(entries.find((e) => e.id === Number(b.dataset.editEntry)))));
+}
+
+function openEntryForm(e) {
+  const accounts = F.opts.accounts.filter((a) => a.active || (e && a.id === e.account_id));
+  const v = e || { kind: 'despesa', competence_date: todayLocal() };
+  const kind = e ? e.kind : 'despesa';
+  const accOptions = (k) => accounts.filter((a) => a.kind === k).map((a) => `<option value="${a.id}" ${e && a.id === e.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const m = openModal(`
+    <div class="modal-head"><h2>${e ? 'Editar lançamento' : 'Novo lançamento'}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-entry">
+      <div class="tabs"><button type="button" data-k="despesa" class="${kind === 'despesa' ? 'active' : ''}">Despesa / pagamento</button>
+        <button type="button" data-k="receita" class="${kind === 'receita' ? 'active' : ''}">Receita / recebimento</button></div>
+      <div class="form-grid">
+        <div class="field"><label>Conta *</label><select name="account_id" id="entry-account">${accOptions(kind)}</select></div>
+        <div class="field"><label>Valor (R$) *</label><input name="amount" inputmode="decimal" required value="${e ? centsToInput(e.amount_cents) : ''}"></div>
+        <div class="field"><label>Descrição</label><input name="description" value="${esc(v.description || '')}" placeholder="Ex.: aluguel de outubro"></div>
+        <div class="field"><label>Favorecido / cliente</label><input name="counterparty" value="${esc(v.counterparty || '')}"></div>
+        <div class="field"><label>Competência * (mês do resultado)</label><input type="date" name="competence_date" required value="${esc(v.competence_date || '')}"></div>
+        <div class="field"><label>Vencimento</label><input type="date" name="due_date" value="${esc(v.due_date || '')}"></div>
+        <div class="field"><label>Pago / recebido em (vazio = em aberto)</label><input type="date" name="paid_date" value="${esc(v.paid_date || '')}"></div>
+        <div class="field"><label>Loja / local (opcional)</label><select name="location_id"><option value="">—</option>
+          ${F.opts.locations.map((l) => `<option value="${l.id}" ${v.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Documento</label><input name="document" value="${esc(v.document || '')}" placeholder="NF, boleto…"></div>
+      </div>
+      <div class="field"><label>Observação</label><input name="note" value="${esc(v.note || '')}"></div>
+      <p class="small muted" id="entry-hint"></p>
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button>
+        ${e ? '<span style="flex:1"></span><button type="button" class="btn-danger" id="btn-del-entry">Excluir</button>' : ''}</div>
+    </form>`, { wide: true });
+  const hint = () => {
+    const a = F.opts.accounts.find((x) => x.id === Number($('#entry-account', m).value));
+    $('#entry-hint', m).textContent = !a ? '' : `${a.dre_group ? `Entra na DRE em “${F.opts.dre_groups[a.dre_group]}”` : 'Não entra na DRE (o estoque já calcula, ou é só movimento de caixa)'}`
+      + ` · na DFC: ${F.opts.dfc_activities[a.dfc_activity || 'operacional']}.`;
+  };
+  $$('[data-k]', m).forEach((b) => b.addEventListener('click', () => {
+    $$('[data-k]', m).forEach((x) => x.classList.toggle('active', x === b));
+    $('#entry-account', m).innerHTML = accOptions(b.dataset.k);
+    hint();
+  }));
+  $('#entry-account', m).addEventListener('change', hint);
+  hint();
+  const form = $('#form-entry', m);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitWith(form, async (data) => {
+      if (e) await api(`/api/admin/financeiro/lancamentos/${e.id}`, { method: 'PUT', body: data });
+      else await api('/api/admin/financeiro/lancamentos', { method: 'POST', body: data });
+      toast('Lançamento salvo.', 'ok');
+      closeModal();
+      renderEntries();
+    });
+  });
+  const del = $('#btn-del-entry', m);
+  if (del) del.addEventListener('click', () => guard(async () => {
+    if (!confirm('Excluir este lançamento?')) return;
+    await api(`/api/admin/financeiro/lancamentos/${e.id}`, { method: 'DELETE' });
+    toast('Lançamento excluído.', 'ok');
+    closeModal();
+    renderEntries();
+  }));
+}
+
+function renderAccounts() {
+  const o = F.opts;
+  const dreOptions = (sel) => `<option value="">— não entra na DRE —</option>${Object.entries(o.dre_groups).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
+  const dfcOptions = (sel) => Object.entries(o.dfc_activities).map(([k, v]) => `<option value="${k}" ${k === (sel || 'operacional') ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  $('#fin-body').innerHTML = `
+    <form class="card row" id="form-opening">
+      <div class="field grow"><label>Saldo de caixa no início (bancos + dinheiro, antes do primeiro lançamento)</label>
+        <input name="valor" inputmode="decimal" value="${centsToInput(o.cash_opening_cents)}"></div>
+      <div class="field"><label>&nbsp;</label><button type="submit">Salvar saldo inicial</button></div>
+    </form>
+    <div class="alert alert-info small">Venda B2B, CMV, perdas, brindes e transferências para as lojas entram <strong>sozinhos</strong> na DRE, vindos do estoque.
+      Por isso “Recebimento de clientes B2B” e “Pagamento de notas de mercadoria” não entram na DRE, só no caixa (DFC): assim nada é contado duas vezes.</div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>Conta</th><th>Tipo</th><th>Linha da DRE</th><th>DFC</th><th></th></tr></thead>
+      <tbody>${o.accounts.map((a) => `
+        <tr ${a.active ? '' : 'style="opacity:.5"'}>
+          <td><input value="${esc(a.name)}" data-acc-name="${a.id}"></td>
+          <td>${a.kind === 'receita' ? '<span class="tag tag-ok">receita</span>' : '<span class="tag tag-out">despesa</span>'}</td>
+          <td><select data-acc-dre="${a.id}">${dreOptions(a.dre_group)}</select></td>
+          <td><select data-acc-dfc="${a.id}">${dfcOptions(a.dfc_activity)}</select></td>
+          <td class="nowrap"><button class="btn-secondary btn-sm" data-acc-save="${a.id}">Salvar</button>
+            <button class="btn-secondary btn-sm" data-acc-toggle="${a.id}" data-active="${a.active}">${a.active ? 'Desativar' : 'Ativar'}</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div></div>
+    <form class="card" id="form-acc">
+      <h2>Nova conta</h2>
+      <div class="form-grid">
+        <div class="field"><label>Nome</label><input name="name" required></div>
+        <div class="field"><label>Tipo</label><select name="kind"><option value="despesa">Despesa</option><option value="receita">Receita</option></select></div>
+        <div class="field"><label>Linha da DRE</label><select name="dre_group">${dreOptions('despesas_administrativas')}</select></div>
+        <div class="field"><label>DFC</label><select name="dfc_activity">${dfcOptions('operacional')}</select></div>
+      </div>
+      <button type="submit" class="btn-secondary">+ Adicionar conta</button>
+    </form>`;
+  const reload = async () => { F.opts = await api('/api/admin/financeiro/opcoes'); renderAccounts(); };
+  const fo = $('#form-opening');
+  fo.addEventListener('submit', (e) => { e.preventDefault(); submitWith(fo, async (d) => { await api('/api/admin/financeiro/saldo-inicial', { method: 'PUT', body: d }); toast('Saldo inicial salvo.', 'ok'); await reload(); }); });
+  const fa = $('#form-acc');
+  fa.addEventListener('submit', (e) => { e.preventDefault(); submitWith(fa, async (d) => { await api('/api/admin/financeiro/contas', { method: 'POST', body: d }); toast('Conta criada.', 'ok'); await reload(); }); });
+  $$('[data-acc-save]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    const id = b.dataset.accSave;
+    await api(`/api/admin/financeiro/contas/${id}`, { method: 'PUT', body: { name: $(`[data-acc-name="${id}"]`).value, dre_group: $(`[data-acc-dre="${id}"]`).value, dfc_activity: $(`[data-acc-dfc="${id}"]`).value } });
+    toast('Conta salva.', 'ok');
+    await reload();
+  })));
+  $$('[data-acc-toggle]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/financeiro/contas/${b.dataset.accToggle}`, { method: 'PUT', body: { active: b.dataset.active !== '1' } });
+    await reload();
+  })));
+}
+
 // ======================= INICIALIZAÇÃO =======================
 async function boot() {
   applyBranding();
@@ -1295,8 +1700,11 @@ async function boot() {
     return renderLogin();
   }
   $('#nav').classList.remove('hidden');
+  // cada perfil vê só o seu menu
+  const role = A.admin.role === 'master' ? 'master' : 'loja';
+  $$('#nav [data-roles]').forEach((b) => b.classList.toggle('hidden', !b.dataset.roles.split(',').includes(role)));
   const initial = location.hash.slice(1);
-  setView(initial && $(`#nav [data-view="${initial}"]`) ? initial : 'painel');
+  setView(initial && $(`#nav [data-view="${initial}"]:not(.hidden)`) ? initial : (role === 'master' ? 'painel' : 'loja-estoque'));
 }
 
 $$('#nav [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
@@ -1307,6 +1715,26 @@ $('#btn-logout').addEventListener('click', async () => {
 });
 
 // atualiza o contador de pedidos novos a cada minuto
-setInterval(() => { if (A.admin) refreshBadges(); }, 60000);
+setInterval(() => { if (isMaster()) refreshBadges(); }, 60000);
+$('#btn-my-pass').addEventListener('click', openMyPassword);
+
+function openMyPassword() {
+  const m = openModal(`
+    <div class="modal-head"><h2>Minha senha</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-my-pass">
+      <div class="field"><label>Senha atual</label><input name="atual" type="password" required autocomplete="current-password"></div>
+      <div class="field"><label>Nova senha (mín. 8)</label><input name="nova" type="password" minlength="8" required autocomplete="new-password"></div>
+      <div class="row"><button type="submit">Alterar senha</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const form = $('#form-my-pass', m);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitWith(form, async (data) => {
+      await api('/api/admin/senha', { method: 'POST', body: data });
+      toast('Senha alterada.', 'ok');
+      closeModal();
+    });
+  });
+}
 
 boot();

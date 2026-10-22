@@ -7,10 +7,11 @@ const express = require('express');
 const ExcelJS = require('exceljs');
 const { getSettings, storageIsPersistent } = require('./db');
 const { hashPassword, verifyPassword, createSessionStore, createLoginLimiter } = require('./auth');
-const { createInventory, BusinessError, SUBTYPES, OUT_TYPES } = require('./inventory');
+const { createInventory, BusinessError, OUT_TYPES } = require('./inventory');
 const { createReports } = require('./reports');
 const { exportReport } = require('./export');
 const { loadOggiCatalog } = require('./catalog');
+const { createFinance, DRE_GROUPS, DFC_ACTIVITIES } = require('./finance');
 const T = require('./time');
 const U = require('./util');
 
@@ -66,6 +67,7 @@ function createApp(db, { testMode = false } = {}) {
   const sessions = createSessionStore(db);
   const inv = createInventory(db);
   const reports = createReports(db);
+  const finance = createFinance(db, reports);
   const loginLimiter = createLoginLimiter();
 
   app.set('trust proxy', 1);
@@ -85,11 +87,19 @@ function createApp(db, { testMode = false } = {}) {
   const withAvailability = (p) => ({ ...p, available_units: p.stock_units - p.reserved_units, image_url: imageUrl(p) });
   const imageUrl = (p) => (p.image_updated_at ? `/img/produto/${p.id}?v=${encodeURIComponent(p.image_updated_at)}` : null);
 
+  // Perfis do painel: master (tudo) e loja (só estoque sem valores e reposição da própria loja).
+  const ROLES = { master: 'Master', loja: 'Loja' };
   function requireAdmin(req, res, next) {
     const id = sessions.userId(req, 'admin');
-    const admin = id && db.prepare('SELECT id, name, email FROM admins WHERE id = ?').get(id);
+    const admin = id && db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, l.name AS location_name
+      FROM admins a LEFT JOIN locations l ON l.id = a.location_id WHERE a.id = ? AND a.active = 1`).get(id);
     if (!admin) return res.status(401).json({ error: 'Faça login no painel.' });
     req.admin = admin;
+    next();
+  }
+
+  function requireMaster(req, res, next) {
+    if (req.admin.role !== 'master') return res.status(403).json({ error: 'Acesso restrito ao usuário master.' });
     next();
   }
 
@@ -267,7 +277,7 @@ function createApp(db, { testMode = false } = {}) {
     if (!name || !email || !senha || String(senha).length < 8) {
       throw new BusinessError('Informe nome, e-mail e uma senha com ao menos 8 caracteres.');
     }
-    const info = db.prepare('INSERT INTO admins (name, email, password_hash) VALUES (?, ?, ?)')
+    const info = db.prepare("INSERT INTO admins (name, email, password_hash, role) VALUES (?, ?, ?, 'master')")
       .run(U.cleanText(name, 100), U.cleanText(email, 150), hashPassword(senha));
     sessions.login(res, req, 'admin', Number(info.lastInsertRowid));
     res.status(201).json({ ok: true });
@@ -276,8 +286,9 @@ function createApp(db, { testMode = false } = {}) {
   app.post('/api/admin/login', loginLimiter, (req, res) => {
     const a = db.prepare('SELECT * FROM admins WHERE email = ?').get(String(req.body?.email || '').trim());
     if (!a || !verifyPassword(req.body?.senha || '', a.password_hash)) throw new BusinessError('E-mail ou senha incorretos.', 401);
+    if (!a.active) throw new BusinessError('Este usuário está desativado. Fale com o responsável pela loja.', 403);
     sessions.login(res, req, 'admin', a.id);
-    res.json({ admin: { id: a.id, name: a.name, email: a.email } });
+    res.json({ admin: { id: a.id, name: a.name, email: a.email, role: a.role } });
   });
 
   app.post('/api/admin/logout', (req, res) => {
@@ -290,6 +301,54 @@ function createApp(db, { testMode = false } = {}) {
   app.use('/api/admin', admin);
 
   admin.get('/me', (req, res) => res.json({ admin: req.admin }));
+  admin.post('/senha', (req, res) => {
+    const { atual, nova } = req.body || {};
+    const a = db.prepare('SELECT * FROM admins WHERE id = ?').get(req.admin.id);
+    if (!verifyPassword(atual || '', a.password_hash)) throw new BusinessError('Senha atual incorreta.');
+    if (!nova || String(nova).length < 8) throw new BusinessError('A nova senha precisa ter ao menos 8 caracteres.');
+    db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(nova), a.id);
+    res.json({ ok: true });
+  });
+
+  // ---------- usuário da LOJA: estoque (sem custos nem preços) e reposição da própria loja ----------
+  admin.get('/loja/estoque', (req, res) => {
+    const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1 ORDER BY p.category, p.name`).all()
+      .map(withAvailability)
+      .map((p) => ({
+        id: p.id, name: p.name, category: p.category, sku: p.sku, barcode: p.barcode, box_barcode: p.box_barcode,
+        units_per_box: p.units_per_box, stock_units: p.stock_units, reserved_units: p.reserved_units,
+        available_units: p.available_units, image_url: p.image_url,
+      }));
+    res.json({ products, location: req.admin.location_name || null });
+  });
+
+  // Reposição: tira da câmara e manda para a loja do usuário (transferência). Masters escolhem a loja.
+  admin.post('/loja/reposicao', (req, res) => {
+    const b = req.body || {};
+    const locationId = req.admin.role === 'loja' ? req.admin.location_id : Number(b.location_id);
+    if (!locationId) throw new BusinessError('Seu usuário não está ligado a nenhuma loja. Peça ao master para definir a loja.');
+    const results = inv.dispatch({
+      type: 'transferencia',
+      lines: b.lines,
+      locationId,
+      note: U.cleanText(b.note, 300) || 'Reposição da loja',
+      user: req.admin.name,
+    });
+    res.json({ moved: results.length, units: results.reduce((s, r) => s - r.quantity, 0) });
+  });
+
+  admin.get('/loja/reposicoes', (req, res) => {
+    const rows = db.prepare(`
+      SELECT m.id, m.created_at, m.quantity, m.created_by, m.note, p.name AS product_name, p.units_per_box, l.name AS location_name,
+        (SELECT 1 FROM stock_movements x WHERE x.reverses_movement_id = m.id) AS reversed
+      FROM stock_movements m JOIN products p ON p.id = m.product_id LEFT JOIN locations l ON l.id = m.location_id
+      WHERE m.type = 'transferencia' AND (? IS NULL OR m.location_id = ?)
+      ORDER BY m.id DESC LIMIT 200`).all(req.admin.role === 'loja' ? req.admin.location_id : null, req.admin.role === 'loja' ? req.admin.location_id : null);
+    res.json({ movements: rows });
+  });
+
+  // ---------- daqui para baixo: só master ----------
+  admin.use(requireMaster);
 
   // ---------- admin: painel ----------
   admin.get('/dashboard', (req, res) => {
@@ -575,7 +634,7 @@ function createApp(db, { testMode = false } = {}) {
     res.json({
       locations: db.prepare("SELECT * FROM locations WHERE kind = 'loja' AND active = 1 ORDER BY name").all(),
       reasons: db.prepare('SELECT * FROM loss_reasons WHERE active = 1 ORDER BY sort, name').all(),
-      subtypes: Object.entries(SUBTYPES).map(([value, label]) => ({ value, label })),
+      subtypes: db.prepare('SELECT key AS value, label, requires_note FROM nonsale_types WHERE active = 1 ORDER BY sort, label').all(),
       customers: db.prepare("SELECT id, razao_social, nome_fantasia FROM customers WHERE status <> 'bloqueado' ORDER BY COALESCE(nome_fantasia, razao_social)").all(),
       note_threshold_cents: Number(s.out_note_threshold_cents) || 0,
       default_supplier: s.default_supplier || '',
@@ -665,16 +724,17 @@ function createApp(db, { testMode = false } = {}) {
     if (qs.to && T.isDate(String(qs.to))) { where.push('m.created_at < ?'); params.push(T.utcStartOfLocalDay(T.addDays(String(qs.to), 1))); }
     const sql = `
       SELECT m.*, ${T.sqlLocalDateTime('m.created_at')} AS created_local, p.name AS product_name, p.barcode, p.units_per_box,
-        l.name AS location_name, r.name AS reason_name, COALESCE(c.nome_fantasia, c.razao_social) AS customer_name,
+        l.name AS location_name, r.name AS reason_name, nt.label AS subtype_label, COALESCE(c.nome_fantasia, c.razao_social) AS customer_name,
         o.type AS reverses_type, (SELECT x.id FROM stock_movements x WHERE x.reverses_movement_id = m.id) AS reversed_by
       FROM stock_movements m JOIN products p ON p.id = m.product_id
       LEFT JOIN locations l ON l.id = m.location_id
       LEFT JOIN loss_reasons r ON r.id = m.reason_id
+      LEFT JOIN nonsale_types nt ON nt.key = m.subtype
       LEFT JOIN customers c ON c.id = m.customer_id
       LEFT JOIN stock_movements o ON o.id = m.reverses_movement_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
       ORDER BY m.id DESC LIMIT ${Math.min(Number(qs.limit) || 500, 5000)}`;
-    return db.prepare(sql).all(...params).map((m) => ({ ...m, subtype_label: m.subtype ? SUBTYPES[m.subtype] || m.subtype : null }));
+    return db.prepare(sql).all(...params);
   }
 
   admin.get('/estoque/movimentos', (req, res) => res.json({ movements: movementQuery(req.query) }));
@@ -711,6 +771,8 @@ function createApp(db, { testMode = false } = {}) {
     vendas: (q) => reports.sales(q.from, q.to),
     perdas: (q) => reports.losses(q.from, q.to),
     transferencias: (q) => reports.transfers(q.from, q.to),
+    dre: (q) => finance.dre(q.from, q.to),
+    dfc: (q) => finance.dfc(q.from, q.to),
   };
   function reportParams(qs) {
     const today = T.localDate();
@@ -882,17 +944,193 @@ function createApp(db, { testMode = false } = {}) {
     res.json({ ok: true });
   });
 
-  admin.get('/usuarios', (req, res) => {
-    res.json({ admins: db.prepare('SELECT id, name, email, created_at FROM admins ORDER BY name').all() });
+  // Tipos de saída sem venda (brinde, parceria…). Não são apagados: desative para esconder.
+  admin.get('/tipos-saida', (req, res) => res.json({ types: db.prepare('SELECT * FROM nonsale_types ORDER BY active DESC, sort, label').all() }));
+  admin.post('/tipos-saida', (req, res) => {
+    const label = U.cleanText(req.body?.label, 80);
+    if (!label) throw new BusinessError('Informe o nome do tipo de saída.');
+    const key = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || `tipo_${Date.now()}`;
+    if (db.prepare('SELECT 1 FROM nonsale_types WHERE key = ? OR lower(label) = lower(?)').get(key, label)) throw new BusinessError('Esse tipo já existe.', 409);
+    const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 s FROM nonsale_types').get().s;
+    db.prepare('INSERT INTO nonsale_types (key, label, requires_note, sort) VALUES (?, ?, ?, ?)').run(key, label, req.body?.requires_note ? 1 : 0, sort);
+    res.status(201).json({ ok: true, key });
   });
+  admin.put('/tipos-saida/:key', (req, res) => {
+    const t = db.prepare('SELECT * FROM nonsale_types WHERE key = ?').get(String(req.params.key));
+    if (!t) throw new BusinessError('Tipo não encontrado.', 404);
+    db.prepare('UPDATE nonsale_types SET label = ?, requires_note = ?, active = ? WHERE key = ?').run(
+      U.cleanText(req.body?.label, 80) || t.label,
+      req.body?.requires_note === undefined ? t.requires_note : (req.body.requires_note ? 1 : 0),
+      req.body?.active === undefined ? t.active : (req.body.active ? 1 : 0), t.key,
+    );
+    res.json({ ok: true });
+  });
+
+  // ---------- financeiro (DRE / DFC) ----------
+  admin.get('/financeiro/opcoes', (req, res) => {
+    res.json({
+      accounts: db.prepare('SELECT * FROM fin_accounts ORDER BY active DESC, kind DESC, sort, name').all(),
+      dre_groups: DRE_GROUPS,
+      dfc_activities: DFC_ACTIVITIES,
+      locations: db.prepare("SELECT id, name FROM locations WHERE active = 1 ORDER BY kind, name").all(),
+      cash_opening_cents: Number(getSettings(db).cash_opening_cents) || 0,
+    });
+  });
+
+  function readAccount(b, existing = {}) {
+    const name = U.cleanText(b.name ?? existing.name, 80);
+    if (!name) throw new BusinessError('Informe o nome da conta.');
+    const kind = (b.kind ?? existing.kind) === 'receita' ? 'receita' : 'despesa';
+    const dre = b.dre_group !== undefined ? (b.dre_group || null) : (existing.dre_group ?? null);
+    if (dre && !DRE_GROUPS[dre]) throw new BusinessError('Linha da DRE inválida.');
+    const dfc = b.dfc_activity !== undefined ? (b.dfc_activity || null) : (existing.dfc_activity ?? 'operacional');
+    if (dfc && !DFC_ACTIVITIES[dfc]) throw new BusinessError('Atividade da DFC inválida.');
+    const active = b.active === undefined ? (existing.active ?? 1) : (b.active ? 1 : 0);
+    return { name, kind, dre_group: dre, dfc_activity: dfc, active };
+  }
+  admin.post('/financeiro/contas', (req, res) => {
+    const a = readAccount(req.body || {});
+    if (db.prepare('SELECT 1 FROM fin_accounts WHERE lower(name) = lower(?)').get(a.name)) throw new BusinessError('Já existe uma conta com esse nome.', 409);
+    const sort = db.prepare('SELECT COALESCE(MAX(sort), 0) + 1 s FROM fin_accounts').get().s;
+    db.prepare('INSERT INTO fin_accounts (name, kind, dre_group, dfc_activity, active, sort) VALUES (@name, @kind, @dre_group, @dfc_activity, @active, @sort)')
+      .run({ ...a, sort });
+    res.status(201).json({ ok: true });
+  });
+  admin.put('/financeiro/contas/:id', (req, res) => {
+    const id = idParam(req);
+    const existing = db.prepare('SELECT * FROM fin_accounts WHERE id = ?').get(id);
+    if (!existing) throw new BusinessError('Conta não encontrada.', 404);
+    const a = readAccount(req.body || {}, existing);
+    if (a.kind !== existing.kind && db.prepare('SELECT 1 FROM fin_entries WHERE account_id = ? LIMIT 1').get(id)) {
+      throw new BusinessError('Esta conta já tem lançamentos: não dá para trocar entre receita e despesa.');
+    }
+    db.prepare('UPDATE fin_accounts SET name = @name, kind = @kind, dre_group = @dre_group, dfc_activity = @dfc_activity, active = @active WHERE id = @id')
+      .run({ ...a, id });
+    res.json({ ok: true });
+  });
+  admin.put('/financeiro/saldo-inicial', (req, res) => {
+    const cents = U.toCents(req.body?.valor);
+    if (!Number.isFinite(cents)) throw new BusinessError('Valor inválido.');
+    db.prepare("INSERT INTO settings (key, value) VALUES ('cash_opening_cents', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(String(cents));
+    res.json({ ok: true });
+  });
+
+  function readEntry(b) {
+    const account = db.prepare('SELECT * FROM fin_accounts WHERE id = ?').get(Number(b.account_id));
+    if (!account) throw new BusinessError('Escolha a conta.');
+    const description = U.cleanText(b.description, 200) || account.name;
+    const amount = U.toCents(b.amount);
+    if (!Number.isFinite(amount) || amount <= 0) throw new BusinessError('Informe um valor maior que zero.');
+    const date = (v, label, required = false) => {
+      const d = String(v || '').trim();
+      if (!d) { if (required) throw new BusinessError(`Informe a data de ${label}.`); return null; }
+      if (!T.isDate(d)) throw new BusinessError(`Data de ${label} inválida.`);
+      return d;
+    };
+    const loc = b.location_id ? db.prepare('SELECT id FROM locations WHERE id = ?').get(Number(b.location_id)) : null;
+    return {
+      account_id: account.id, description, amount_cents: amount,
+      competence_date: date(b.competence_date, 'competência', true), due_date: date(b.due_date, 'vencimento'), paid_date: date(b.paid_date, 'pagamento'),
+      location_id: loc ? loc.id : null, counterparty: U.cleanText(b.counterparty, 120), document: U.cleanText(b.document, 80), note: U.cleanText(b.note, 300),
+    };
+  }
+  admin.get('/financeiro/lancamentos', (req, res) => {
+    const q = req.query;
+    const field = q.campo === 'pagamento' ? 'e.paid_date' : q.campo === 'vencimento' ? 'e.due_date' : 'e.competence_date';
+    const where = [];
+    const params = [];
+    if (T.isDate(String(q.from || ''))) { where.push(`${field} >= ?`); params.push(String(q.from)); }
+    if (T.isDate(String(q.to || ''))) { where.push(`${field} <= ?`); params.push(String(q.to)); }
+    if (q.status === 'aberto') where.push('e.paid_date IS NULL');
+    if (q.status === 'pago') where.push('e.paid_date IS NOT NULL');
+    if (q.account_id) { where.push('e.account_id = ?'); params.push(Number(q.account_id)); }
+    if (q.kind === 'receita' || q.kind === 'despesa') { where.push('a.kind = ?'); params.push(q.kind); }
+    const entries = db.prepare(`
+      SELECT e.*, a.name AS account_name, a.kind, l.name AS location_name
+      FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id LEFT JOIN locations l ON l.id = e.location_id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY ${field} DESC, e.id DESC LIMIT 1000`).all(...params);
+    const open = db.prepare(`SELECT a.kind, COALESCE(SUM(e.amount_cents), 0) v FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id
+      WHERE e.paid_date IS NULL GROUP BY a.kind`).all();
+    res.json({ entries, open: Object.fromEntries(open.map((r) => [r.kind, r.v])) });
+  });
+  admin.post('/financeiro/lancamentos', (req, res) => {
+    const e = readEntry(req.body || {});
+    const info = db.prepare(`INSERT INTO fin_entries (account_id, description, amount_cents, competence_date, due_date, paid_date, location_id,
+      counterparty, document, note, created_by) VALUES (@account_id, @description, @amount_cents, @competence_date, @due_date, @paid_date,
+      @location_id, @counterparty, @document, @note, @created_by)`).run({ ...e, created_by: req.admin.name });
+    res.status(201).json({ id: Number(info.lastInsertRowid) });
+  });
+  admin.put('/financeiro/lancamentos/:id', (req, res) => {
+    const id = idParam(req);
+    if (!db.prepare('SELECT 1 FROM fin_entries WHERE id = ?').get(id)) throw new BusinessError('Lançamento não encontrado.', 404);
+    const e = readEntry(req.body || {});
+    db.prepare(`UPDATE fin_entries SET account_id = @account_id, description = @description, amount_cents = @amount_cents,
+      competence_date = @competence_date, due_date = @due_date, paid_date = @paid_date, location_id = @location_id,
+      counterparty = @counterparty, document = @document, note = @note, updated_at = datetime('now') WHERE id = @id`).run({ ...e, id });
+    res.json({ ok: true });
+  });
+  admin.post('/financeiro/lancamentos/:id/pagar', (req, res) => {
+    const id = idParam(req);
+    const d = String(req.body?.paid_date || T.localDate());
+    if (!T.isDate(d)) throw new BusinessError('Data inválida.');
+    const r = db.prepare("UPDATE fin_entries SET paid_date = ?, updated_at = datetime('now') WHERE id = ?").run(d, id);
+    if (!r.changes) throw new BusinessError('Lançamento não encontrado.', 404);
+    res.json({ ok: true });
+  });
+  admin.delete('/financeiro/lancamentos/:id', (req, res) => {
+    const r = db.prepare('DELETE FROM fin_entries WHERE id = ?').run(idParam(req));
+    if (!r.changes) throw new BusinessError('Lançamento não encontrado.', 404);
+    res.json({ ok: true });
+  });
+
+  admin.get('/usuarios', (req, res) => {
+    res.json({
+      admins: db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, a.active, a.created_at, l.name AS location_name
+        FROM admins a LEFT JOIN locations l ON l.id = a.location_id ORDER BY a.active DESC, a.role, a.name`).all(),
+    });
+  });
+
+  function readUserRole(b) {
+    const role = b.role === 'loja' ? 'loja' : 'master';
+    let locationId = null;
+    if (role === 'loja') {
+      const loc = b.location_id && db.prepare("SELECT * FROM locations WHERE id = ? AND kind = 'loja'").get(Number(b.location_id));
+      if (!loc) throw new BusinessError('Escolha a loja deste usuário.');
+      locationId = loc.id;
+    }
+    return { role, locationId };
+  }
+  const activeMasters = () => db.prepare("SELECT COUNT(*) n FROM admins WHERE role = 'master' AND active = 1").get().n;
 
   admin.post('/usuarios', (req, res) => {
     const { name, email, senha } = req.body || {};
     if (!name || !email || !senha || String(senha).length < 8) throw new BusinessError('Informe nome, e-mail e senha (mín. 8 caracteres).');
     if (db.prepare('SELECT 1 FROM admins WHERE email = ?').get(String(email).trim())) throw new BusinessError('E-mail já cadastrado.', 409);
-    db.prepare('INSERT INTO admins (name, email, password_hash) VALUES (?, ?, ?)')
-      .run(U.cleanText(name, 100), U.cleanText(email, 150), hashPassword(senha));
+    const { role, locationId } = readUserRole(req.body);
+    db.prepare('INSERT INTO admins (name, email, password_hash, role, location_id) VALUES (?, ?, ?, ?, ?)')
+      .run(U.cleanText(name, 100), U.cleanText(email, 150), hashPassword(senha), role, locationId);
     res.status(201).json({ ok: true });
+  });
+
+  admin.put('/usuarios/:id', (req, res) => {
+    const id = idParam(req);
+    const u = db.prepare('SELECT * FROM admins WHERE id = ?').get(id);
+    if (!u) throw new BusinessError('Usuário não encontrado.', 404);
+    const b = req.body || {};
+    const { role, locationId } = b.role !== undefined ? readUserRole(b) : { role: u.role, locationId: u.location_id };
+    const active = b.active === undefined ? u.active : (b.active ? 1 : 0);
+    const losesMaster = u.role === 'master' && u.active && (role !== 'master' || !active);
+    if (losesMaster && activeMasters() <= 1) throw new BusinessError('Precisa existir ao menos um usuário master ativo.');
+    if (id === req.admin.id && losesMaster) throw new BusinessError('Você não pode tirar o seu próprio acesso de master.');
+    db.prepare('UPDATE admins SET name = ?, role = ?, location_id = ?, active = ? WHERE id = ?')
+      .run(U.cleanText(b.name, 100) || u.name, role, locationId, active, id);
+    if (b.senha) {
+      if (String(b.senha).length < 8) throw new BusinessError('A senha precisa ter ao menos 8 caracteres.');
+      db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(b.senha), id);
+    }
+    if (!active || b.senha || role !== u.role) sessions.revokeAll('admin', id);
+    res.json({ ok: true });
   });
 
   // Cópia completa do banco de dados (produtos, estoque, pedidos, clientes).
@@ -902,14 +1140,6 @@ function createApp(db, { testMode = false } = {}) {
     res.download(file, `oggi-backup-${new Date().toISOString().slice(0, 10)}.db`, () => fs.rm(file, { force: true }, () => {}));
   });
 
-  admin.post('/senha', (req, res) => {
-    const { atual, nova } = req.body || {};
-    const a = db.prepare('SELECT * FROM admins WHERE id = ?').get(req.admin.id);
-    if (!verifyPassword(atual || '', a.password_hash)) throw new BusinessError('Senha atual incorreta.');
-    if (!nova || String(nova).length < 8) throw new BusinessError('A nova senha precisa ter ao menos 8 caracteres.');
-    db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(nova), a.id);
-    res.json({ ok: true });
-  });
 
   // ---------- imagens dos produtos (públicas; o ?v= muda quando a foto muda) ----------
   app.get('/img/produto/:id', (req, res) => {

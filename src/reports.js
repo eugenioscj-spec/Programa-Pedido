@@ -8,7 +8,6 @@
 // Tipos de coluna: text | int | units (usa row.upb) | money (centavos) | pct (0–1) | unitcost (centavos, com decimais)
 
 const T = require('./time');
-const { SUBTYPES } = require('./inventory');
 
 const BUCKETS = {
   entrada: 'Entradas (compras)',
@@ -31,13 +30,14 @@ function createReports(db) {
     SELECT m.*, CASE WHEN m.type = 'estorno' AND o.type IS NOT NULL THEN o.type ELSE m.type END AS eff_type,
       ${T.sqlLocalMonth('m.created_at')} AS month, ${T.sqlLocalDate('m.created_at')} AS local_date,
       p.name AS product_name, p.category, p.units_per_box AS upb,
-      l.name AS location_name, r.name AS reason_name,
+      l.name AS location_name, r.name AS reason_name, nt.label AS subtype_label,
       c.razao_social, c.nome_fantasia
     FROM stock_movements m
     JOIN products p ON p.id = m.product_id
     LEFT JOIN stock_movements o ON o.id = m.reverses_movement_id
     LEFT JOIN locations l ON l.id = m.location_id
     LEFT JOIN loss_reasons r ON r.id = m.reason_id
+    LEFT JOIN nonsale_types nt ON nt.key = m.subtype
     LEFT JOIN customers c ON c.id = m.customer_id`;
 
   const periodMovements = (from, to) => {
@@ -172,7 +172,7 @@ function createReports(db) {
       let label = null;
       if (m.eff_type === 'transferencia') label = `Transferência → ${m.location_name || '?'}`;
       else if (m.eff_type === 'perda') label = `Perda: ${m.reason_name || '?'}`;
-      else if (m.eff_type === 'saida_sem_venda') label = `Sem venda: ${SUBTYPES[m.subtype] || m.subtype || '?'}`;
+      else if (m.eff_type === 'saida_sem_venda') label = `Sem venda: ${m.subtype_label || m.subtype || '?'}`;
       if (!label) continue;
       const d = detail.get(label) || { line: label, units: 0, value: 0, nullValue: false };
       d.units += m.quantity;
@@ -356,7 +356,7 @@ function createReports(db) {
     };
   }
 
-  return { position, reconciliation, sales, losses, transfers, dashboard, positionRows };
+  return { position, reconciliation, sales, losses, transfers, dashboard, positionRows, periodMovements };
 }
 
 module.exports = { createReports, BUCKETS };

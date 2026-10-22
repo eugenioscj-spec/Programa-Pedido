@@ -18,15 +18,19 @@
       </a>
       <span class="spacer"></span>
       <nav id="nav" class="hidden">
-        <button data-view="painel">Painel</button>
-        <button data-view="pedidos">Pedidos<span class="badge-count hidden" id="badge-novos"></span></button>
-        <button data-view="movimentar">Entrada / Saída</button>
-        <button data-view="estoque">Estoque</button>
-        <button data-view="movimentos">Histórico</button>
-        <button data-view="relatorios">Relatórios</button>
-        <button data-view="produtos">Produtos</button>
-        <button data-view="clientes">Clientes<span class="badge-count hidden" id="badge-clientes"></span></button>
-        <button data-view="config">Config.</button>
+        <button data-view="painel" data-roles="master">Painel</button>
+        <button data-view="pedidos" data-roles="master">Pedidos<span class="badge-count hidden" id="badge-novos"></span></button>
+        <button data-view="movimentar" data-roles="master">Entrada / Saída</button>
+        <button data-view="estoque" data-roles="master">Estoque</button>
+        <button data-view="movimentos" data-roles="master">Histórico</button>
+        <button data-view="relatorios" data-roles="master">Relatórios</button>
+        <button data-view="financeiro" data-roles="master">Financeiro</button>
+        <button data-view="produtos" data-roles="master">Produtos</button>
+        <button data-view="clientes" data-roles="master">Clientes<span class="badge-count hidden" id="badge-clientes"></span></button>
+        <button data-view="config" data-roles="master">Config.</button>
+        <button data-view="loja-estoque" data-roles="loja">Estoque da câmara</button>
+        <button data-view="loja-repor" data-roles="loja">Repor loja</button>
+        <button id="btn-my-pass" data-roles="loja">Minha senha</button>
         <button id="btn-logout">Sair</button>
       </nav>
     </div>

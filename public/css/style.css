@@ -257,6 +257,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .p-img { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; border-radius: 10px; background: #faf7fb; }
 .p-img-empty { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; background: linear-gradient(135deg, var(--brand-soft), #efe6f7); }
 .alert.row { display: flex; }
+.r-sub td { color: var(--muted); font-size: .9rem; }
+.r-sub td:first-child { padding-left: 22px; }
+.r-total td { font-weight: 700; border-top: 2px solid var(--line); }
+.r-strong td { font-weight: 750; }
+.r-total.r-strong td { background: var(--brand-soft); }
 
 @media (max-width: 640px) {
   main { padding: 14px 12px 90px; }

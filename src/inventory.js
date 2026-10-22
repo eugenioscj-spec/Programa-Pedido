@@ -29,13 +29,6 @@ const TRANSITIONS = {
   cancelado: [],
 };
 
-const SUBTYPES = {
-  bonificacao_cliente: 'Bonificação a cliente',
-  amostra_degustacao: 'Amostra / degustação',
-  consumo_interno: 'Consumo interno',
-  outros: 'Outros',
-};
-
 const OUT_TYPES = ['transferencia', 'perda', 'saida_sem_venda'];
 
 const brl = (c) => `R$ ${(Number(c) / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
@@ -80,6 +73,7 @@ function createInventory(db) {
     location: db.prepare('SELECT * FROM locations WHERE id = ?'),
     reason: db.prepare('SELECT * FROM loss_reasons WHERE id = ?'),
     customer: db.prepare('SELECT id FROM customers WHERE id = ?'),
+    nonsaleType: db.prepare('SELECT * FROM nonsale_types WHERE key = ?'),
   };
 
   function reservedUnits(productId, excludeOrderId = null) {
@@ -248,8 +242,10 @@ function createInventory(db) {
       if (reason.requires_note && !note) throw new BusinessError(`O motivo "${reason.name}" precisa de observação.`);
       extra.reasonId = reason.id;
     } else {
-      if (!SUBTYPES[subtype]) throw new BusinessError('Escolha o tipo da saída sem venda.');
-      extra.subtype = subtype;
+      const st = subtype && q.nonsaleType.get(String(subtype));
+      if (!st || !st.active) throw new BusinessError('Escolha o tipo da saída sem venda.');
+      if (st.requires_note && !note) throw new BusinessError(`O tipo "${st.label}" precisa de observação.`);
+      extra.subtype = st.key;
       if (customerId) {
         if (!q.customer.get(Number(customerId))) throw new BusinessError('Cliente não encontrado.');
         extra.customerId = Number(customerId);
@@ -510,4 +506,4 @@ function createInventory(db) {
   };
 }
 
-module.exports = { createInventory, BusinessError, TRANSITIONS, RESERVING_STATUSES, SUBTYPES, OUT_TYPES };
+module.exports = { createInventory, BusinessError, TRANSITIONS, RESERVING_STATUSES, OUT_TYPES };
