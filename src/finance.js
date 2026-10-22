@@ -36,7 +36,7 @@ function monthsBetween(from, to) {
 }
 const monthLabel = (ym) => `${ym.slice(5)}/${ym.slice(0, 4)}`;
 
-function createFinance(db, reports) {
+function createFinance(db, reports, { bankOpening = () => 0 } = {}) {
   // Soma por mês: { 'YYYY-MM': cents }
   const add = (obj, month, v) => { obj[month] = (obj[month] || 0) + v; };
   const sum = (obj) => Object.values(obj).reduce((s, v) => s + v, 0);
@@ -169,7 +169,8 @@ function createFinance(db, reports) {
       r.total = sum(values);
       rows.push(r);
     };
-    let balance = opening + before;
+    const banks = bankOpening();
+    let balance = opening + banks + before;
     const initial = {};
     const variation = {};
     for (const act of Object.keys(DFC_ACTIVITIES)) {
@@ -195,7 +196,7 @@ function createFinance(db, reports) {
       balance += variation[m] || 0;
       fin[m] = balance;
     }
-    ini.total = initial[months[0]] ?? opening + before;
+    ini.total = initial[months[0]] ?? opening + banks + before;
     fin.total = balance;
     rows.unshift(ini);
     rows.push(fin);
@@ -206,11 +207,18 @@ function createFinance(db, reports) {
       subtitle: `${from} a ${to}. Regime de caixa: só lançamentos com data de pagamento/recebimento.`,
       warnings: [
         'Recebimentos de clientes B2B e pagamentos de notas de mercadoria entram aqui só quando lançados em Financeiro. Contas a receber automáticas dos pedidos ficam para a Fase 2.',
-        ...(opening ? [] : ['Informe o saldo de caixa inicial em Financeiro → Plano de contas para o saldo ficar correto.']),
+        ...(banks ? [`O saldo inicial inclui ${(banks / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} dos bancos, calculado pelos extratos importados.`] : []),
+        ...(pendingBank(from, to) ? [`${pendingBank(from, to)} movimento(s) dos extratos ainda não conciliado(s) no período: entram no caixa só depois de conciliados.`] : []),
       ],
       sections: [{ title: 'Fluxo de caixa', columns, rows }],
       result: { saldo_inicial: ini.total, variacao: sum(variation), saldo_final: balance },
     };
+  }
+
+  function pendingBank(from, to) {
+    try {
+      return db.prepare("SELECT COUNT(*) n FROM bank_transactions WHERE status = 'pendente' AND posted_date BETWEEN ? AND ?").get(from, to).n;
+    } catch { return 0; }
   }
 
   return { dre, dfc };

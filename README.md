@@ -30,6 +30,21 @@ Em **Financeiro**:
 
 Exportação para Excel/CSV como os demais relatórios.
 
+### Bancos: extratos OFX e conciliação
+
+Em **Financeiro → Bancos e conciliação**:
+
+1. Exporte o extrato em **OFX** no internet banking (Itaú, Santander, Bradesco, C6 e outros) e importe. Pode mandar vários arquivos e meses de uma vez; o que já foi importado é ignorado, mesmo com períodos sobrepostos. A conta bancária é criada sozinha.
+2. O sistema **confere o saldo**: calcula o saldo de cada conta pelos movimentos e compara com o saldo que o banco informa em cada arquivo. Se não bater, provavelmente falta importar algum período.
+3. **Concilie** cada movimento:
+   - **Dar baixa:** quando existe um lançamento em aberto com o mesmo valor e vencimento próximo (até 10 dias), o sistema sugere a baixa;
+   - **Lançar:** escolhe a conta do plano de contas e o movimento vira um lançamento já pago. Marcando "lembrar", o sistema aprende e sugere a mesma conta da próxima vez;
+   - **Ignorar:** para o que só troca dinheiro de lugar (transferência entre contas próprias, aplicação/resgate, pagamento de fatura do cartão).
+   - Dá para selecionar vários e **aceitar as sugestões** ou lançar todos numa conta. Tudo pode ser desfeito.
+4. **Extratos por banco:** saldo inicial, entradas, saídas e saldo final de cada conta, mês a mês, além dos totais por categoria.
+
+O saldo dos bancos calculado pelos extratos entra sozinho no saldo inicial da **DFC**. O "saldo inicial em dinheiro" do plano de contas é só o que fica fora dos bancos.
+
 ## Como o estoque funciona
 
 O estoque é sempre guardado em **unidades**. Cada produto tem "unidades por caixa", então o sistema mostra tudo como `3 cx + 5 un`.

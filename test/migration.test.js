@@ -8,6 +8,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { openDatabase, SCHEMA_V1 } = require('../src/db');
 const { createInventory } = require('../src/inventory');
+const { LATEST_VERSION } = require('../src/migrations');
 
 // Monta um banco exatamente no formato da versão 1, com dados de todos os tipos antigos.
 function buildV1(file) {
@@ -42,7 +43,7 @@ test('migração: banco no formato antigo, com dados, migra sem perder nada', ()
 
   const logs = [];
   const db = openDatabase(file, { log: (m) => logs.push(m) });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '4');
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
   assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'store_name'").get().value, 'Minha Loja');
 
   // cópia de segurança feita antes de migrar
@@ -111,7 +112,7 @@ test('migração 3: remove os produtos de exemplo da 1ª versão sem mexer no re
   old.close();
 
   const db = openDatabase(file, { log: () => {} });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '4');
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
   assert.deepEqual(db.prepare('SELECT name FROM products').all().map((r) => r.name), ['Picolé Sensa Clássico']);
   assert.deepEqual(db.prepare('SELECT id FROM stock_movements ORDER BY id').all().map((r) => r.id), [2, 4], 'só o histórico do produto de verdade');
   assert.deepEqual(db.prepare('SELECT id, total_cents FROM orders').all(), [{ id: 1, total_cents: 599 }], 'pedido misto fica, só de exemplo sai');

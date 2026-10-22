@@ -308,6 +308,66 @@ const MIGRATIONS = [
       setDefault.run('cash_opening_cents', '0');
     },
   },
+  {
+    version: 5,
+    name: 'Bancos: contas, extratos OFX, conciliação e regras',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bank_accounts (
+          id             INTEGER PRIMARY KEY,
+          name           TEXT NOT NULL,
+          bank_code      TEXT,
+          bank_name      TEXT,
+          branch         TEXT,
+          account_number TEXT NOT NULL,
+          kind           TEXT NOT NULL DEFAULT 'corrente' CHECK (kind IN ('corrente', 'cartao')),
+          active         INTEGER NOT NULL DEFAULT 1,
+          created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (bank_code, account_number, kind)
+        );
+        CREATE TABLE IF NOT EXISTS bank_imports (
+          id               INTEGER PRIMARY KEY,
+          bank_account_id  INTEGER NOT NULL REFERENCES bank_accounts(id),
+          file_name        TEXT,
+          period_start     TEXT,
+          period_end       TEXT,
+          ledger_balance_cents INTEGER,
+          balance_date     TEXT,
+          count_new        INTEGER NOT NULL DEFAULT 0,
+          count_duplicate  INTEGER NOT NULL DEFAULT 0,
+          created_by       TEXT,
+          created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS bank_transactions (
+          id              INTEGER PRIMARY KEY,
+          bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id),
+          import_id       INTEGER REFERENCES bank_imports(id),
+          dedupe_key      TEXT NOT NULL,
+          fitid           TEXT,
+          posted_date     TEXT NOT NULL,
+          amount_cents    INTEGER NOT NULL,
+          description     TEXT NOT NULL,
+          trntype         TEXT,
+          status          TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'conciliado', 'ignorado')),
+          entry_id        INTEGER REFERENCES fin_entries(id),
+          link_type       TEXT CHECK (link_type IS NULL OR link_type IN ('criado', 'baixado')),
+          note            TEXT,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (bank_account_id, dedupe_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_banktx_status ON bank_transactions(status, posted_date);
+        CREATE INDEX IF NOT EXISTS idx_banktx_entry ON bank_transactions(entry_id);
+        CREATE TABLE IF NOT EXISTS bank_rules (
+          id         INTEGER PRIMARY KEY,
+          pattern    TEXT NOT NULL UNIQUE,
+          account_id INTEGER NOT NULL REFERENCES fin_accounts(id),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      const cols = db.prepare('PRAGMA table_info(fin_entries)').all().map((c) => c.name);
+      if (!cols.includes('bank_account_id')) db.exec('ALTER TABLE fin_entries ADD COLUMN bank_account_id INTEGER REFERENCES bank_accounts(id)');
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

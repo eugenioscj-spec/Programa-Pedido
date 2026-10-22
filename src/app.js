@@ -12,6 +12,7 @@ const { createReports } = require('./reports');
 const { exportReport } = require('./export');
 const { loadOggiCatalog } = require('./catalog');
 const { createFinance, DRE_GROUPS, DFC_ACTIVITIES } = require('./finance');
+const { createBank } = require('./bank');
 const T = require('./time');
 const U = require('./util');
 
@@ -67,7 +68,8 @@ function createApp(db, { testMode = false } = {}) {
   const sessions = createSessionStore(db);
   const inv = createInventory(db);
   const reports = createReports(db);
-  const finance = createFinance(db, reports);
+  const bank = createBank(db);
+  const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
   app.set('trust proxy', 1);
@@ -773,6 +775,7 @@ function createApp(db, { testMode = false } = {}) {
     transferencias: (q) => reports.transfers(q.from, q.to),
     dre: (q) => finance.dre(q.from, q.to),
     dfc: (q) => finance.dfc(q.from, q.to),
+    bancos: (q) => bank.report(q.from, q.to),
   };
   function reportParams(qs) {
     const today = T.localDate();
@@ -1081,6 +1084,42 @@ function createApp(db, { testMode = false } = {}) {
   admin.delete('/financeiro/lancamentos/:id', (req, res) => {
     const r = db.prepare('DELETE FROM fin_entries WHERE id = ?').run(idParam(req));
     if (!r.changes) throw new BusinessError('Lançamento não encontrado.', 404);
+    res.json({ ok: true });
+  });
+
+  // ---------- bancos: extratos OFX e conciliação ----------
+  admin.get('/banco/contas', (req, res) => res.json({ accounts: bank.accounts() }));
+  admin.put('/banco/contas/:id', (req, res) => {
+    const id = idParam(req);
+    const a = db.prepare('SELECT * FROM bank_accounts WHERE id = ?').get(id);
+    if (!a) throw new BusinessError('Conta bancária não encontrada.', 404);
+    db.prepare('UPDATE bank_accounts SET name = ?, active = ? WHERE id = ?')
+      .run(U.cleanText(req.body?.name, 80) || a.name, req.body?.active === undefined ? a.active : (req.body.active ? 1 : 0), id);
+    res.json({ ok: true });
+  });
+  admin.post('/banco/importar', (req, res) => {
+    const files = (Array.isArray(req.body?.files) ? req.body.files : []).slice(0, 60).map((f) => ({
+      name: U.cleanText(f.name, 120) || 'extrato.ofx',
+      buffer: Buffer.from(String(f.data || ''), 'base64'),
+    }));
+    if (!files.length) throw new BusinessError('Escolha ao menos um arquivo OFX.');
+    res.json({ results: bank.importFiles({ files, user: req.admin.name }) });
+  });
+  admin.get('/banco/transacoes', (req, res) => {
+    res.json({ transactions: bank.listTransactions({ accountId: req.query.conta, status: req.query.status, from: req.query.from, to: req.query.to }) });
+  });
+  admin.post('/banco/transacoes/:id/conciliar', (req, res) => {
+    res.json({ result: bank.conciliate(idParam(req), req.body || {}, req.admin.name) });
+  });
+  admin.post('/banco/conciliar-lote', (req, res) => {
+    res.json(bank.conciliateMany({ ids: req.body?.ids, accountId: req.body?.account_id || null, user: req.admin.name }));
+  });
+  admin.post('/banco/transacoes/:id/desfazer', (req, res) => res.json({ result: bank.undo(idParam(req)) }));
+  admin.get('/banco/regras', (req, res) => {
+    res.json({ rules: db.prepare('SELECT r.*, a.name AS account_name, a.kind FROM bank_rules r JOIN fin_accounts a ON a.id = r.account_id ORDER BY r.pattern').all() });
+  });
+  admin.delete('/banco/regras/:id', (req, res) => {
+    db.prepare('DELETE FROM bank_rules WHERE id = ?').run(idParam(req));
     res.json({ ok: true });
   });
 

@@ -1493,12 +1493,12 @@ const F = { tab: 'lancamentos', from: null, to: null, campo: 'competencia', stat
 async function renderFinance() {
   if (!F.from) [F.from, F.to] = monthRange(0);
   F.opts = await api('/api/admin/financeiro/opcoes');
-  const tabs = { lancamentos: 'Lançamentos', dre: 'DRE', dfc: 'DFC (caixa)', contas: 'Plano de contas' };
+  const tabs = { lancamentos: 'Lançamentos', bancos: 'Bancos e conciliação', dre: 'DRE', dfc: 'DFC (caixa)', extratos: 'Extratos por banco', contas: 'Plano de contas' };
   app.innerHTML = `
     <div class="section-head"><h1>Financeiro</h1><span class="spacer"></span>
       ${F.tab === 'lancamentos' ? '<button id="btn-new-entry">+ Novo lançamento</button>' : ''}</div>
     <div class="chips">${Object.entries(tabs).map(([k, v]) => `<button class="chip ${k === F.tab ? 'active' : ''}" data-ft="${k}">${v}</button>`).join('')}</div>
-    ${F.tab !== 'contas' ? `
+    ${F.tab !== 'contas' && F.tab !== 'bancos' ? `
     <form class="card" id="fin-filter"><div class="row">
       ${F.tab === 'lancamentos' ? `<div class="field"><label>Período por</label><select id="f-campo">
         <option value="competencia" ${F.campo === 'competencia' ? 'selected' : ''}>Competência</option>
@@ -1533,13 +1533,14 @@ async function renderFinance() {
       else [F.from, F.to] = monthRange(Number(b.dataset.fp));
       guard(renderFinance);
     }));
-    $$('[data-fexp]').forEach((b) => b.addEventListener('click', () => downloadUrl(`/api/admin/relatorios/${F.tab}?from=${F.from}&to=${F.to}&formato=${b.dataset.fexp}`)));
+    $$('[data-fexp]').forEach((b) => b.addEventListener('click', () => downloadUrl(`/api/admin/relatorios/${F.tab === 'extratos' ? 'bancos' : F.tab}?from=${F.from}&to=${F.to}&formato=${b.dataset.fexp}`)));
   }
   const nb = $('#btn-new-entry');
   if (nb) nb.addEventListener('click', () => openEntryForm(null));
   if (F.tab === 'lancamentos') return renderEntries();
   if (F.tab === 'contas') return renderAccounts();
-  const { report } = await api(`/api/admin/relatorios/${F.tab}?from=${F.from}&to=${F.to}`);
+  if (F.tab === 'bancos') return renderBanks();
+  const { report } = await api(`/api/admin/relatorios/${F.tab === 'extratos' ? 'bancos' : F.tab}?from=${F.from}&to=${F.to}`);
   $('#fin-body').innerHTML = `
     <div class="report-head"><h2>${esc(report.title)}</h2><p class="small muted">${esc(report.subtitle || '')}</p></div>
     ${(report.warnings || []).map((w) => `<div class="alert alert-info small">${esc(w)}</div>`).join('')}
@@ -1646,7 +1647,7 @@ function renderAccounts() {
   const dfcOptions = (sel) => Object.entries(o.dfc_activities).map(([k, v]) => `<option value="${k}" ${k === (sel || 'operacional') ? 'selected' : ''}>${esc(v)}</option>`).join('');
   $('#fin-body').innerHTML = `
     <form class="card row" id="form-opening">
-      <div class="field grow"><label>Saldo de caixa no início (bancos + dinheiro, antes do primeiro lançamento)</label>
+      <div class="field grow"><label>Saldo inicial em dinheiro (fora dos bancos). O saldo dos bancos vem sozinho dos extratos OFX.</label>
         <input name="valor" inputmode="decimal" value="${centsToInput(o.cash_opening_cents)}"></div>
       <div class="field"><label>&nbsp;</label><button type="submit">Salvar saldo inicial</button></div>
     </form>
@@ -1688,6 +1689,201 @@ function renderAccounts() {
   $$('[data-acc-toggle]').forEach((b) => b.addEventListener('click', () => guard(async () => {
     await api(`/api/admin/financeiro/contas/${b.dataset.accToggle}`, { method: 'PUT', body: { active: b.dataset.active !== '1' } });
     await reload();
+  })));
+}
+
+// ======================= BANCOS (OFX) E CONCILIAÇÃO =======================
+const BK = { conta: '', status: 'pendente', from: '', to: '', selected: new Set() };
+const IGNORE_REASONS = ['Transferência entre contas próprias', 'Aplicação / resgate financeiro', 'Pagamento de fatura do cartão (já lançado no cartão)', 'Outro'];
+
+function toBase64(buf) {
+  let bin = '';
+  const bytes = new Uint8Array(buf);
+  for (let k = 0; k < bytes.length; k += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+  return btoa(bin);
+}
+
+async function renderBanks() {
+  const [{ accounts }, { transactions }, { rules }] = await Promise.all([
+    api('/api/admin/banco/contas'),
+    api(`/api/admin/banco/transacoes?${new URLSearchParams({ conta: BK.conta, status: BK.status, from: BK.from, to: BK.to })}`),
+    api('/api/admin/banco/regras'),
+  ]);
+  BK.selected = new Set([...BK.selected].filter((id) => transactions.some((t) => t.id === id && t.status === 'pendente')));
+  const finAcc = F.opts.accounts.filter((a) => a.active);
+  const accOptions = (kind, sel) => `<option value="">Escolha a conta…</option>${finAcc.filter((a) => a.kind === kind)
+    .map((a) => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}`;
+  const pendingCount = accounts.reduce((s, a) => s + a.pending, 0);
+  $('#fin-body').innerHTML = `
+    <div class="card">
+      <h2>Importar extratos (OFX)</h2>
+      <p class="small muted">No internet banking, exporte o extrato em <strong>OFX</strong> (Itaú, Santander, Bradesco, C6 e outros). Pode enviar vários arquivos e meses de uma vez:
+        o que já foi importado é ignorado, mesmo que os períodos se sobreponham.</p>
+      <div class="row"><input type="file" id="ofx-files" accept=".ofx,.OFX" multiple class="grow"><button id="btn-ofx">Importar</button></div>
+      <div id="ofx-result" style="margin-top:10px"></div>
+    </div>
+    ${accounts.length ? `
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>Conta</th><th>Período importado</th><th class="num">Saldo (pelos extratos)</th><th>Conferência</th><th class="num">Pendentes</th><th></th></tr></thead>
+      <tbody>${accounts.map((a) => `
+        <tr ${a.active ? '' : 'style="opacity:.5"'}>
+          <td><input value="${esc(a.name)}" data-bk-name="${a.id}"><div class="small muted">${esc(a.bank_name || '')} · ${a.kind === 'cartao' ? 'cartão de crédito' : `ag. ${esc(a.branch || '—')} c/c ${esc(a.account_number)}`}</div></td>
+          <td class="small nowrap">${a.first ? `${fmtDate(a.first, false)} a ${fmtDate(a.last, false)}` : '—'}<div class="muted">${a.count} movimentos</div></td>
+          <td class="num nowrap">${a.balance_cents === null ? '—' : money(a.balance_cents)}</td>
+          <td>${!a.checks.length ? '<span class="tag tag-low">sem saldo no OFX</span>' : a.ok ? '<span class="tag tag-ok">bate com o banco</span>' : '<span class="tag tag-out">não bate: falta período?</span>'}</td>
+          <td class="num">${a.pending ? `<button class="btn-link" data-bk-filter="${a.id}">${a.pending}</button>` : '0'}</td>
+          <td class="nowrap"><button class="btn-secondary btn-sm" data-bk-save="${a.id}">Salvar nome</button>
+            <button class="btn-secondary btn-sm" data-bk-toggle="${a.id}" data-active="${a.active}">${a.active ? 'Desativar' : 'Ativar'}</button></td>
+        </tr>`).join('')}</tbody>
+    </table></div></div>` : ''}
+    <div class="card">
+      <div class="section-head"><h2>Conciliação ${pendingCount ? `<span class="tag tag-low">${pendingCount} pendente(s)</span>` : '<span class="tag tag-ok">tudo conciliado</span>'}</h2></div>
+      <form class="row" id="bk-filter">
+        <div class="field"><label>Conta</label><select id="bk-conta"><option value="">Todas</option>${accounts.map((a) => `<option value="${a.id}" ${String(a.id) === String(BK.conta) ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Situação</label><select id="bk-status">
+          ${[['pendente', 'Pendentes'], ['conciliado', 'Conciliados'], ['ignorado', 'Ignorados'], ['', 'Todos']].map(([v, l]) => `<option value="${v}" ${v === BK.status ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>De</label><input type="date" id="bk-from" value="${BK.from}"></div>
+        <div class="field"><label>Até</label><input type="date" id="bk-to" value="${BK.to}"></div>
+        <div class="field"><label>&nbsp;</label><button type="submit" class="btn-secondary">Filtrar</button></div>
+      </form>
+      ${BK.status === 'pendente' && transactions.length ? `
+      <div class="row bulk-bar">
+        <label class="check"><input type="checkbox" id="bk-all"> Selecionar todos</label>
+        <span class="small muted" id="bk-count"></span><span class="grow"></span>
+        <button class="btn-secondary btn-sm" id="bk-accept">Aceitar sugestões dos selecionados</button>
+        <select id="bk-bulk-acc" class="per-select"><option value="">ou lançar todos na conta…</option>
+          <optgroup label="Entradas">${finAcc.filter((a) => a.kind === 'receita').map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</optgroup>
+          <optgroup label="Saídas">${finAcc.filter((a) => a.kind === 'despesa').map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</optgroup></select>
+        <button class="btn-sm" id="bk-bulk">Lançar</button>
+      </div>` : ''}
+      <div class="table-wrap"><table>
+        <thead><tr>${BK.status === 'pendente' ? '<th></th>' : ''}<th>Data</th><th>Descrição no extrato</th><th class="num">Valor</th><th>Conciliação</th></tr></thead>
+        <tbody>${transactions.map((t) => {
+          const kind = t.amount_cents > 0 ? 'receita' : 'despesa';
+          const s = t.suggestion;
+          let action;
+          if (t.status === 'conciliado') {
+            action = `<span class="tag tag-entregue">${t.link_type === 'baixado' ? 'baixa em' : 'lançado em'}</span> ${esc(t.entry_account_name || '')} <button class="btn-link small" data-bk-undo="${t.id}">desfazer</button>`;
+          } else if (t.status === 'ignorado') {
+            action = `<span class="tag tag-cancelado">ignorado</span> <span class="small muted">${esc(t.note || '')}</span> <button class="btn-link small" data-bk-undo="${t.id}">desfazer</button>`;
+          } else if (s && s.type === 'baixar') {
+            action = `<div class="small">Paga o lançamento em aberto <strong>${esc(s.entry.description)}</strong> (${esc(s.entry.account_name)}, venc. ${fmtDate(s.entry.due_date || s.entry.competence_date, false)})</div>
+              <div class="row"><button class="btn-ok btn-sm" data-bk-pay="${t.id}" data-entry="${s.entry.id}">Dar baixa</button>
+              <button class="btn-link small" data-bk-other="${t.id}">lançar em outra conta</button> <button class="btn-link small" data-bk-ignore="${t.id}">ignorar</button></div>`;
+          } else {
+            action = `<div class="row conc-row"><select data-bk-acc="${t.id}" class="per-select">${accOptions(kind, s ? s.account_id : null)}</select>
+              <button class="btn-sm" data-bk-create="${t.id}">Lançar</button>
+              <label class="check small"><input type="checkbox" data-bk-remember="${t.id}" ${s ? '' : 'checked'}> lembrar</label>
+              <button class="btn-link small" data-bk-ignore="${t.id}">ignorar</button></div>
+              ${s ? `<div class="small muted">sugestão pelo ${esc(s.source)}</div>` : ''}`;
+          }
+          return `<tr data-row="${t.id}">
+            ${BK.status === 'pendente' ? `<td><input type="checkbox" data-bk-sel="${t.id}" ${BK.selected.has(t.id) ? 'checked' : ''}></td>` : ''}
+            <td class="nowrap">${fmtDate(t.posted_date, false)}<div class="small muted">${esc(t.bank_account_name)}</div></td>
+            <td>${esc(t.description)}</td>
+            <td class="num nowrap ${t.amount_cents > 0 ? 'qty-pos' : 'qty-neg'}">${money(t.amount_cents)}</td>
+            <td>${action}</td></tr>`;
+        }).join('') || `<tr><td colspan="5" class="empty">${BK.status === 'pendente' ? 'Nada pendente. Importe extratos acima.' : 'Nada encontrado.'}</td></tr>`}</tbody>
+      </table></div>
+    </div>
+    ${rules.length ? `<div class="card"><h2>Regras aprendidas</h2><p class="small muted">Quando a descrição do extrato contém o texto, o sistema sugere a conta.</p>
+      <div class="table-wrap"><table><tbody>${rules.map((r) => `<tr><td class="mono small">${esc(r.pattern)}</td><td>${esc(r.account_name)}</td>
+        <td><button class="btn-danger btn-sm" data-rule-del="${r.id}">Apagar</button></td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+
+  const reload = () => guard(renderBanks);
+  const count = () => { const el = $('#bk-count'); if (el) el.textContent = BK.selected.size ? `${BK.selected.size} selecionado(s)` : ''; };
+  count();
+  $('#btn-ofx').addEventListener('click', () => guard(async () => {
+    const files = [...$('#ofx-files').files];
+    if (!files.length) return toast('Escolha os arquivos OFX.', 'error');
+    const payload = await Promise.all(files.map(async (f) => ({ name: f.name, data: toBase64(await f.arrayBuffer()) })));
+    const { results } = await api('/api/admin/banco/importar', { method: 'POST', body: { files: payload } });
+    const ok = results.filter((r) => !r.error);
+    toast(`${ok.reduce((s, r) => s + r.new, 0)} movimento(s) novos importados.`, 'ok');
+    await renderBanks();
+    $('#ofx-result').innerHTML = `<div class="table-wrap"><table class="small"><tbody>${results.map((r) => `<tr class="${r.error ? 'row-danger' : ''}">
+      <td>${esc(r.file)}</td><td>${r.error ? esc(r.error) : `${esc(r.account)} · ${r.period_start ? `${fmtDate(r.period_start, false)} a ${fmtDate(r.period_end, false)}` : ''}`}</td>
+      <td class="num">${r.error ? '' : `${r.new} novos · ${r.duplicate} já importados`}</td></tr>`).join('')}</tbody></table></div>`;
+  }));
+  const bf = $('#bk-filter');
+  bf.addEventListener('submit', (e) => {
+    e.preventDefault();
+    Object.assign(BK, { conta: $('#bk-conta').value, status: $('#bk-status').value, from: $('#bk-from').value, to: $('#bk-to').value });
+    reload();
+  });
+  $$('[data-bk-filter]').forEach((b) => b.addEventListener('click', () => { Object.assign(BK, { conta: b.dataset.bkFilter, status: 'pendente' }); reload(); }));
+  $$('[data-bk-save]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/banco/contas/${b.dataset.bkSave}`, { method: 'PUT', body: { name: $(`[data-bk-name="${b.dataset.bkSave}"]`).value } });
+    toast('Nome salvo.', 'ok');
+  })));
+  $$('[data-bk-toggle]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/banco/contas/${b.dataset.bkToggle}`, { method: 'PUT', body: { active: b.dataset.active !== '1' } });
+    reload();
+  })));
+  const conc = (id, body) => guard(async () => {
+    await api(`/api/admin/banco/transacoes/${id}/conciliar`, { method: 'POST', body });
+    BK.selected.delete(Number(id));
+    const row = $(`[data-row="${id}"]`);
+    if (row) row.remove();
+    toast('Conciliado.', 'ok');
+  });
+  $$('[data-bk-create]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.bkCreate;
+    const accountId = $(`[data-bk-acc="${id}"]`).value;
+    if (!accountId) return toast('Escolha a conta.', 'error');
+    conc(id, { action: 'criar', account_id: accountId, remember: $(`[data-bk-remember="${id}"]`).checked });
+  }));
+  $$('[data-bk-pay]').forEach((b) => b.addEventListener('click', () => conc(b.dataset.bkPay, { action: 'baixar', entry_id: b.dataset.entry })));
+  $$('[data-bk-other]').forEach((b) => b.addEventListener('click', () => {
+    const t = transactions.find((x) => x.id === Number(b.dataset.bkOther));
+    t.suggestion = null;
+    const cell = b.closest('td');
+    cell.innerHTML = `<div class="row"><select data-bk-acc="${t.id}" class="per-select">${accOptions(t.amount_cents > 0 ? 'receita' : 'despesa', null)}</select>
+      <button class="btn-sm" data-bk-create2="${t.id}">Lançar</button></div>`;
+    $(`[data-bk-create2="${t.id}"]`).addEventListener('click', () => {
+      const accountId = $(`[data-bk-acc="${t.id}"]`).value;
+      if (!accountId) return toast('Escolha a conta.', 'error');
+      conc(t.id, { action: 'criar', account_id: accountId });
+    });
+  }));
+  $$('[data-bk-ignore]').forEach((b) => b.addEventListener('click', () => {
+    const id = b.dataset.bkIgnore;
+    const m = openModal(`
+      <div class="modal-head"><h2>Ignorar movimento</h2><button class="modal-close" data-close>×</button></div>
+      <p class="small">Use para o que <strong>não é receita nem despesa</strong>: dinheiro que só mudou de lugar. Não entra na DRE nem no caixa.</p>
+      <div class="field"><label for="ign-reason">Motivo</label><select id="ign-reason">${IGNORE_REASONS.map((r) => `<option>${esc(r)}</option>`).join('')}</select></div>
+      <div class="row"><button id="ign-ok">Ignorar</button><button class="btn-secondary" data-close>Cancelar</button></div>`);
+    $('#ign-ok', m).addEventListener('click', () => { closeModal(); conc(id, { action: 'ignorar', note: $('#ign-reason', m).value }); });
+  }));
+  $$('[data-bk-undo]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/banco/transacoes/${b.dataset.bkUndo}/desfazer`, { method: 'POST', body: {} });
+    toast('Desfeito: voltou para pendente.', 'ok');
+    reload();
+  })));
+  $$('[data-bk-sel]').forEach((c) => c.addEventListener('change', () => {
+    const id = Number(c.dataset.bkSel);
+    if (c.checked) BK.selected.add(id); else BK.selected.delete(id);
+    count();
+  }));
+  const all = $('#bk-all');
+  if (all) all.addEventListener('change', () => {
+    $$('[data-bk-sel]').forEach((c) => { c.checked = all.checked; const id = Number(c.dataset.bkSel); if (all.checked) BK.selected.add(id); else BK.selected.delete(id); });
+    count();
+  });
+  const bulk = async (accountId) => {
+    if (!BK.selected.size) return toast('Selecione os movimentos.', 'error');
+    const r = await api('/api/admin/banco/conciliar-lote', { method: 'POST', body: { ids: [...BK.selected], account_id: accountId || null } });
+    toast(`${r.done} conciliado(s)${r.skipped.length ? ` · ${r.skipped.length} sem sugestão ou de tipo diferente (ficaram pendentes)` : ''}.`, 'ok');
+    BK.selected.clear();
+    reload();
+  };
+  const acc = $('#bk-accept');
+  if (acc) acc.addEventListener('click', () => guard(() => bulk(null)));
+  const bb = $('#bk-bulk');
+  if (bb) bb.addEventListener('click', () => guard(() => { if (!$('#bk-bulk-acc').value) return toast('Escolha a conta.', 'error'); return bulk($('#bk-bulk-acc').value); }));
+  $$('[data-rule-del]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/banco/regras/${b.dataset.ruleDel}`, { method: 'DELETE' });
+    reload();
   })));
 }
 

@@ -258,6 +258,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .p-img-empty { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; background: linear-gradient(135deg, var(--brand-soft), #efe6f7); }
 .alert.row { display: flex; }
 .r-sub td { color: var(--muted); font-size: .9rem; }
+.bulk-bar { background: var(--bg); border-radius: 10px; padding: 8px 10px; margin: 6px 0 10px; }
+.conc-row select { max-width: 240px; }
 .r-sub td:first-child { padding-left: 22px; }
 .r-total td { font-weight: 700; border-top: 2px solid var(--line); }
 .r-strong td { font-weight: 750; }
