@@ -169,24 +169,35 @@ Testes automáticos: `npm test`.
 | Variável | Padrão | Para que serve |
 |---|---|---|
 | `PORT` | `3000` | Porta do servidor |
-| `DB_PATH` | `./data/oggi.db` (ou o Volume do Railway) | Onde fica o arquivo do banco de dados |
+| `DB_PATH` | `./data/oggi.db` (ou o Volume do Railway) | Onde fica o arquivo do banco de dados. No Render com disco: `/data/oggi.db` |
 | `MODO_TESTE` | — | `sim` só mostra a faixa "Ambiente de teste" no topo. Não lança dados de exemplo (isso só no teste local). |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | — | Ao iniciar, criam esse administrador ou redefinem a senha dele. Apague depois de usar. |
 
 ## Colocar no ar (link para os clientes)
 
-O caminho recomendado é o **Railway** (cerca de US$ 5/mês). O projeto já vem configurado para ele (`railway.json`):
+**Os dados só ficam guardados se a hospedagem tiver disco permanente.** Sem disco, toda vez que o sistema
+reinicia (no Render grátis isso acontece após 15 min sem acesso e a cada atualização) o banco volta ao início:
+senhas, clientes, estoque e lançamentos se perdem. O painel mostra um aviso vermelho nesse caso.
+
+### Render (o que está em uso)
+
+1. No serviço, em **Settings → Instance Type**, troque **Free** por **Starter** (cerca de US$ 7/mês). O plano grátis não aceita disco.
+2. Em **Disks → Add Disk**: nome `dados`, **Mount Path** `/data`, tamanho **1 GB** (cerca de US$ 0,25/mês).
+3. Em **Environment**, crie a variável `DB_PATH` = `/data/oggi.db`. Apague `MODO_TESTE`, se existir.
+4. Salve. Depois que atualizar, entre no painel e confira que o aviso vermelho sumiu.
+5. Se usou `ADMIN_EMAIL`/`ADMIN_PASSWORD` para entrar, apague essas variáveis depois do primeiro acesso:
+   enquanto existirem, a senha do administrador volta para a da variável a cada reinício.
+
+Com disco, cada atualização deixa o sistema fora do ar por alguns segundos.
+
+### Railway
 
 1. Em railway.com, entre com a conta do GitHub. Clique em **New Project → Deploy from GitHub repo** e escolha este repositório.
-2. Adicione um **Volume** (disco) ao serviço, com caminho `/data`. O sistema detecta o volume sozinho (`RAILWAY_VOLUME_MOUNT_PATH`) e salva o banco nele. **Sem volume os dados se perdem**, e o painel mostra um aviso vermelho.
+2. Adicione um **Volume** (disco) ao serviço, com caminho `/data`. O sistema detecta o volume sozinho (`RAILWAY_VOLUME_MOUNT_PATH`) e salva o banco nele.
 3. Em **Settings → Networking → Generate Domain**, gere o endereço público.
 4. Abra `https://SEU-ENDERECO/admin` e crie o administrador. O primeiro a acessar cria o usuário, então faça isso logo depois de gerar o endereço.
 
-Toda vez que um código novo for enviado para o GitHub, o Railway atualiza o sistema sozinho, e os dados no volume continuam lá.
-
-**Esqueceu a senha do painel?** No Railway, em **Variables**, crie `ADMIN_EMAIL` (o seu e-mail de login) e `ADMIN_PASSWORD` (a nova senha). O sistema reinicia com a senha nova. Depois de entrar, apague as duas variáveis.
-
-Outra opção é uma **VPS** (Hostinger, DigitalOcean, etc.): instale o Node 22, rode com `pm2 start server.js` e coloque um domínio com HTTPS.
+Em qualquer hospedagem, toda vez que um código novo é enviado para o GitHub o sistema atualiza sozinho, e os dados no disco continuam lá.
 
 ### Backup
 

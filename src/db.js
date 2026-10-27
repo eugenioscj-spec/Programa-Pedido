@@ -135,10 +135,16 @@ function defaultDbPath() {
   return path.join(__dirname, '..', 'data', 'oggi.db');
 }
 
-// Em hospedagem sem disco persistente, os dados somem a cada atualização.
-function storageIsPersistent() {
-  const onRailway = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
-  return !onRailway || !!(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DB_PATH);
+// Em hospedagem sem disco persistente (Render grátis, Railway sem Volume), os dados somem
+// toda vez que o serviço reinicia ou atualiza. Disco montado = outro sistema de arquivos que o do app.
+function storageIsPersistent(file = defaultDbPath()) {
+  const hosted = !!(process.env.RENDER || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+  if (!hosted) return true;
+  try {
+    return fs.statSync(path.dirname(file)).dev !== fs.statSync(path.join(__dirname, '..')).dev;
+  } catch {
+    return false;
+  }
 }
 
 function openDatabase(file, { log, upTo } = {}) {

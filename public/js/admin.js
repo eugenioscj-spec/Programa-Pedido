@@ -137,10 +137,10 @@ async function renderDashboard() {
   const m = d.month;
   app.innerHTML = `
     ${d.storage_ok ? '' : `<div class="alert alert-error"><strong>Atenção: os dados NÃO estão sendo salvos de forma permanente.</strong>
-      Falta conectar um <strong>Volume</strong> (disco) ao serviço no Railway. Sem ele, tudo o que for cadastrado some na próxima atualização.
-      Veja o passo “Criar o disco” no guia de instalação.</div>`}
-    ${d.test_mode ? `<div class="alert alert-info"><strong>Ambiente de TESTE.</strong> Produtos, estoque, custos e pedidos de exemplo — não use para a contabilidade de verdade.
-      Para começar o sistema real, siga o passo “Sair do modo de teste” do guia.</div>` : ''}
+      A hospedagem está sem disco permanente (no Render, o plano gratuito não tem). Toda vez que o sistema reinicia ou é atualizado,
+      tudo volta ao início: senhas, clientes, estoque e lançamentos. Contrate o plano pago com disco (veja “Colocar no ar” no README).</div>`}
+    ${d.test_mode ? `<div class="alert alert-info"><strong>Ambiente de TESTE</strong> (variável MODO_TESTE ligada).
+      Quando for usar de verdade, apague a variável MODO_TESTE na hospedagem.</div>` : ''}
     ${d.uncosted ? `<div class="alert alert-warn row"><span class="grow"><strong>${d.uncosted} produto(s) com estoque e sem custo cadastrado.</strong>
       Os valores em R$ deixam esses produtos à parte até você informar o custo.</span>
       <button class="btn-sm" id="btn-go-cost">Informar custo inicial</button></div>` : ''}
