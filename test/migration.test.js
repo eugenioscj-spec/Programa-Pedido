@@ -8,7 +8,11 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { openDatabase, SCHEMA_V1 } = require('../src/db');
 const { createInventory } = require('../src/inventory');
-const { LATEST_VERSION } = require('../src/migrations');
+const { LATEST_VERSION, LOJA2 } = require('../src/migrations');
+const { seedTestData } = require('../src/test-data');
+
+// As migrações até a 5 preservam os dados; a 6 é a limpeza para começar do zero (testada à parte).
+const V5 = 5;
 
 // Monta um banco exatamente no formato da versão 1, com dados de todos os tipos antigos.
 function buildV1(file) {
@@ -42,8 +46,8 @@ test('migração: banco no formato antigo, com dados, migra sem perder nada', ()
   buildV1(file);
 
   const logs = [];
-  const db = openDatabase(file, { log: (m) => logs.push(m) });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
+  const db = openDatabase(file, { log: (m) => logs.push(m), upTo: V5 });
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(V5));
   assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'store_name'").get().value, 'Minha Loja');
 
   // cópia de segurança feita antes de migrar
@@ -80,7 +84,7 @@ test('migração: banco no formato antigo, com dados, migra sem perder nada', ()
   db.close();
 
   // rodar de novo não faz nada (idempotente) e não cria outra cópia
-  const again = openDatabase(file, { log: () => {} });
+  const again = openDatabase(file, { log: () => {}, upTo: V5 });
   assert.equal(again.prepare('SELECT COUNT(*) n FROM stock_movements').get().n, 9);
   assert.equal(fs.readdirSync(path.join(dir, 'backups')).length, 1);
   again.close();
@@ -111,13 +115,56 @@ test('migração 3: remove os produtos de exemplo da 1ª versão sem mexer no re
   `);
   old.close();
 
-  const db = openDatabase(file, { log: () => {} });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
+  const db = openDatabase(file, { log: () => {}, upTo: V5 });
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(V5));
   assert.deepEqual(db.prepare('SELECT name FROM products').all().map((r) => r.name), ['Picolé Sensa Clássico']);
   assert.deepEqual(db.prepare('SELECT id FROM stock_movements ORDER BY id').all().map((r) => r.id), [2, 4], 'só o histórico do produto de verdade');
   assert.deepEqual(db.prepare('SELECT id, total_cents FROM orders').all(), [{ id: 1, total_cents: 599 }], 'pedido misto fica, só de exemplo sai');
   assert.equal(db.prepare("SELECT COUNT(*) n FROM settings WHERE key = 'show_stock_quantity'").get().n, 0);
   assert.throws(() => db.prepare('DELETE FROM stock_movements WHERE id = 2').run(), /não podem ser apagadas/);
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('migração 6: apaga movimentações, pedidos e financeiro; fica só o cliente Loja 2', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oggi-mig6-'));
+  const file = path.join(dir, 'oggi.db');
+  const old = openDatabase(file, { log: () => {}, upTo: V5 });
+  seedTestData(old, { log: () => {} });
+  old.exec(`
+    INSERT INTO fin_entries (account_id, description, amount_cents, competence_date, paid_date) VALUES (1, 'Aluguel', 300000, '2026-10-01', '2026-10-05');
+    INSERT INTO bank_accounts (id, name, bank_code, account_number) VALUES (1, 'Itaú', '341', '12345');
+    INSERT INTO bank_imports (id, bank_account_id) VALUES (1, 1);
+    INSERT INTO bank_transactions (bank_account_id, import_id, dedupe_key, posted_date, amount_cents, description, status, entry_id)
+      VALUES (1, 1, 'k1', '2026-10-05', -300000, 'ALUGUEL', 'conciliado', 1);
+    INSERT INTO bank_rules (pattern, account_id) VALUES ('ALUGUEL', 1);
+    UPDATE settings SET value = '50000' WHERE key = 'cash_opening_cents';
+  `);
+  const before = old.prepare('SELECT COUNT(*) n FROM stock_movements').get().n;
+  assert.ok(before > 0 && old.prepare('SELECT COUNT(*) n FROM orders').get().n > 0);
+  old.close();
+
+  const db = openDatabase(file, { log: () => {} });
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
+  const count = (t) => db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n;
+  for (const t of ['stock_movements', 'orders', 'order_items', 'fin_entries', 'bank_accounts', 'bank_imports', 'bank_transactions', 'bank_rules']) {
+    assert.equal(count(t), 0, `${t} vazia`);
+  }
+  // produtos, fotos, plano de contas e locais continuam; estoque zerado e sem custo
+  assert.equal(count('products'), 90);
+  assert.ok(count('product_images') > 0 && count('fin_accounts') > 0 && count('locations') > 0);
+  assert.deepEqual(db.prepare('SELECT SUM(stock_units) u, SUM(stock_value_cents) v, SUM(has_cost) c FROM products').get(), { u: 0, v: 0, c: 0 });
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM products WHERE barcode LIKE '789000000%' OR box_barcode LIKE '1789000000%'").get().n, 0);
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'cash_opening_cents'").get().value, '0');
+  // único cliente: Loja 2, ativa, ainda sem senha
+  const customers = db.prepare('SELECT * FROM customers').all();
+  assert.deepEqual(customers.map((c) => [c.cnpj, c.nome_fantasia, c.status]), [[LOJA2.cnpj, 'Loja 2', 'ativo']]);
+  // o kardex volta a ser imutável e o estoque funciona do zero
+  const inv = createInventory(db);
+  const p = db.prepare('SELECT id FROM products LIMIT 1').get();
+  const [m] = inv.receive({ lines: [{ product_id: p.id, units: 10, cost_cents: 100 }], document: 'NF 1', user: 'Teste' });
+  assert.equal(m.id, 1, 'numeração recomeça do 1');
+  assert.throws(() => db.prepare('DELETE FROM stock_movements').run(), /não podem ser apagadas/);
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });

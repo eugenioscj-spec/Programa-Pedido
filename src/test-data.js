@@ -1,7 +1,7 @@
 'use strict';
 
-// Dados de TESTE: usados pelo "Testar no Windows.bat" e, no Railway, só quando a variável
-// MODO_TESTE=sim estiver ligada. Lançam estoque com custo de EXEMPLO — nunca use no sistema de verdade.
+// Dados de TESTE: usados só pelo "Testar no Windows/Mac" (no próprio computador).
+// Lançam estoque com custo de EXEMPLO — nunca use no sistema de verdade.
 //
 // - Banco novo: Catálogo Oggi 2026 (com fotos), dois clientes e ~45 dias de movimentações de
 //   todos os tipos, para testar os relatórios.

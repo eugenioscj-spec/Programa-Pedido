@@ -77,6 +77,18 @@ const MOV_DELETE_GUARD = `
 // Produtos de exemplo da 1ª versão do sistema (scripts/seed-demo.js antigo): SKU EX001…, nome "… (exemplo)".
 const LEGACY_DEMO_PRODUCTS = "sku GLOB 'EX[0-9][0-9][0-9]' AND name LIKE '% (exemplo)'";
 
+// Códigos de barras fictícios usados pelos dados de teste (src/test-data.js), de unidade e de caixa.
+const TEST_BARCODES = ['7890000000011', '17890000000018', '7890000000028', '17890000000025', '7890000000059', '17890000000056'];
+
+// Loja 2: loja física ligada à câmara. Por enquanto é o único cliente; no futuro os pedidos dela
+// viram transferência da câmara para o estoque da loja.
+const LOJA2 = {
+  cnpj: '65532954000246',
+  razao_social: 'Oggi Sorvetes - Loja 2',
+  nome_fantasia: 'Loja 2',
+  notes: 'Loja própria ligada à câmara. Os pedidos dela vão virar transferência para o estoque da loja (a desenvolver).',
+};
+
 const MIGRATIONS = [
   {
     version: 2,
@@ -368,6 +380,39 @@ const MIGRATIONS = [
       if (!cols.includes('bank_account_id')) db.exec('ALTER TABLE fin_entries ADD COLUMN bank_account_id INTEGER REFERENCES bank_accounts(id)');
     },
   },
+  {
+    version: 6,
+    name: 'Começo limpo: apaga movimentações, pedidos e lançamentos de teste; único cliente é a Loja 2',
+    up(db) {
+      // Estoque zerado: kardex e pedidos saem inteiros. Produtos, fotos, locais, motivos e plano de contas ficam.
+      db.exec('DROP TRIGGER IF EXISTS mov_no_delete');
+      db.exec('DELETE FROM stock_movements');
+      db.exec(MOV_DELETE_GUARD);
+      db.exec('DELETE FROM order_items; DELETE FROM orders;');
+      db.exec('UPDATE products SET stock_units = 0, stock_value_cents = 0, has_cost = 0');
+      // códigos de barras fictícios dos dados de teste
+      const fake = TEST_BARCODES.map((c) => `'${c}'`).join(',');
+      db.exec(`UPDATE products SET barcode = NULL WHERE barcode IN (${fake})`);
+      db.exec(`UPDATE products SET box_barcode = NULL WHERE box_barcode IN (${fake})`);
+
+      // Financeiro e bancos: lançamentos, extratos, contas bancárias e regras aprendidas.
+      db.exec('DELETE FROM bank_transactions; DELETE FROM bank_imports; DELETE FROM bank_rules; DELETE FROM fin_entries; DELETE FROM bank_accounts;');
+      db.prepare("UPDATE settings SET value = '0' WHERE key = 'cash_opening_cents'").run();
+      db.prepare("DELETE FROM settings WHERE key = 'test_stock_loaded'").run();
+
+      // Clientes: fica só a Loja 2. Sem senha até o master definir uma em Clientes → Editar.
+      db.prepare("DELETE FROM sessions WHERE user_type = 'customer'").run();
+      db.prepare('DELETE FROM customers WHERE cnpj <> ?').run(LOJA2.cnpj);
+      db.prepare(`INSERT OR IGNORE INTO customers (cnpj, razao_social, nome_fantasia, cidade, password_hash, status, notes)
+        VALUES (?, ?, ?, 'Sinop', '!', 'ativo', ?)`).run(LOJA2.cnpj, LOJA2.razao_social, LOJA2.nome_fantasia, LOJA2.notes);
+
+      // numeração recomeça do 1 (pedido #1, lançamento #1…)
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").get()) {
+        db.exec(`DELETE FROM sqlite_sequence WHERE name IN ('stock_movements', 'orders', 'order_items', 'fin_entries',
+          'bank_accounts', 'bank_imports', 'bank_transactions', 'bank_rules', 'customers')`);
+      }
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -381,9 +426,10 @@ function hasData(db) {
   return db.prepare('SELECT (SELECT COUNT(*) FROM products) + (SELECT COUNT(*) FROM customers) AS n').get().n > 0;
 }
 
-function runMigrations(db, file, { log = console.log } = {}) {
+// upTo: para os testes pararem numa versão intermediária.
+function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = {}) {
   let version = currentVersion(db);
-  const pending = MIGRATIONS.filter((m) => m.version > version);
+  const pending = MIGRATIONS.filter((m) => m.version > version && m.version <= upTo);
   if (!pending.length) return { from: version, to: version, backup: null };
 
   let backup = null;
@@ -416,4 +462,4 @@ function runMigrations(db, file, { log = console.log } = {}) {
   return { from, to: version, backup };
 }
 
-module.exports = { runMigrations, LATEST_VERSION, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
+module.exports = { runMigrations, LATEST_VERSION, LOJA2, TEST_BARCODES, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };

@@ -25,13 +25,15 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD) {
   }
 }
 
-// MODO_TESTE=sim: ambiente de TESTE online, com catálogo, clientes e estoque de exemplo.
-// Nunca ligue no sistema de verdade: os custos e movimentações são inventados.
-const testMode = String(process.env.MODO_TESTE || '').toLowerCase() === 'sim';
-if (testMode) {
-  console.log('MODO DE TESTE ligado: carregando dados de exemplo (só na primeira vez).');
-  require('./src/test-data').seedTestData(db);
+// Banco sem nenhum produto: carrega o Catálogo Oggi 2026 (sem estoque, sem clientes, sem lançamentos).
+if (db.prepare('SELECT COUNT(*) n FROM products').get().n === 0) {
+  const r = require('./src/catalog').loadOggiCatalog(db);
+  console.log(`Catálogo Oggi 2026 carregado: ${r.created} produto(s).`);
 }
+
+// MODO_TESTE=sim: só mostra a faixa "Ambiente de teste". Não lança mais dados de exemplo
+// online; para isso use o "Testar no Windows/Mac" no próprio computador.
+const testMode = String(process.env.MODO_TESTE || '').toLowerCase() === 'sim';
 
 const app = createApp(db, { testMode });
 

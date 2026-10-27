@@ -170,7 +170,7 @@ Testes automáticos: `npm test`.
 |---|---|---|
 | `PORT` | `3000` | Porta do servidor |
 | `DB_PATH` | `./data/oggi.db` (ou o Volume do Railway) | Onde fica o arquivo do banco de dados |
-| `MODO_TESTE` | — | `sim` liga o **ambiente de teste online**: carrega o catálogo, clientes e estoque de exemplo (só na primeira vez) e mostra a faixa "Ambiente de teste". Nunca use no sistema de verdade. |
+| `MODO_TESTE` | — | `sim` só mostra a faixa "Ambiente de teste" no topo. Não lança dados de exemplo (isso só no teste local). |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` | — | Ao iniciar, criam esse administrador ou redefinem a senha dele. Apague depois de usar. |
 
 ## Colocar no ar (link para os clientes)

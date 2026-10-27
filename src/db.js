@@ -141,7 +141,7 @@ function storageIsPersistent() {
   return !onRailway || !!(process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DB_PATH);
 }
 
-function openDatabase(file, { log } = {}) {
+function openDatabase(file, { log, upTo } = {}) {
   const target = file || defaultDbPath();
   if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true });
   const db = new Database(target);
@@ -151,7 +151,7 @@ function openDatabase(file, { log } = {}) {
   db.exec(SCHEMA_V1);
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) insert.run(k, v);
-  runMigrations(db, target, { log: log || (target === ':memory:' ? () => {} : console.log) });
+  runMigrations(db, target, { log: log || (target === ':memory:' ? () => {} : console.log), upTo });
   return db;
 }
 
