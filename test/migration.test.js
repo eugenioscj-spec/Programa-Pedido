@@ -168,3 +168,15 @@ test('migração 6: apaga movimentações, pedidos e financeiro; fica só o clie
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('migração 7: corrige o CNPJ da Loja 2 mantendo a senha', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oggi-mig7-'));
+  const file = path.join(dir, 'oggi.db');
+  const old = openDatabase(file, { log: () => {}, upTo: 6 });
+  old.prepare("UPDATE customers SET cnpj = '65532954000246', password_hash = 'x'").run();
+  old.close();
+  const db = openDatabase(file, { log: () => {} });
+  assert.deepEqual(db.prepare('SELECT cnpj, password_hash FROM customers').all(), [{ cnpj: '63532954000246', password_hash: 'x' }]);
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

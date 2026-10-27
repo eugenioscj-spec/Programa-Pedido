@@ -83,7 +83,7 @@ const TEST_BARCODES = ['7890000000011', '17890000000018', '7890000000028', '1789
 // Loja 2: loja física ligada à câmara. Por enquanto é o único cliente; no futuro os pedidos dela
 // viram transferência da câmara para o estoque da loja.
 const LOJA2 = {
-  cnpj: '65532954000246',
+  cnpj: '63532954000246',
   razao_social: 'Oggi Sorvetes - Loja 2',
   nome_fantasia: 'Loja 2',
   notes: 'Loja própria ligada à câmara. Os pedidos dela vão virar transferência para o estoque da loja (a desenvolver).',
@@ -411,6 +411,15 @@ const MIGRATIONS = [
         db.exec(`DELETE FROM sqlite_sequence WHERE name IN ('stock_movements', 'orders', 'order_items', 'fin_entries',
           'bank_accounts', 'bank_imports', 'bank_transactions', 'bank_rules', 'customers')`);
       }
+    },
+  },
+  {
+    version: 7,
+    name: 'Corrige o CNPJ da Loja 2',
+    up(db) {
+      // A versão 6 foi ao ar com um dígito trocado (65.532.954/0002-46).
+      if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(LOJA2.cnpj)) return;
+      db.prepare("UPDATE customers SET cnpj = ? WHERE cnpj = '65532954000246'").run(LOJA2.cnpj);
     },
   },
 ];
