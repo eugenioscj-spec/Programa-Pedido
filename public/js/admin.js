@@ -420,7 +420,7 @@ async function renderScanner(type = scanType) {
     <div class="chips">${Object.entries(SCAN_TYPES).map(([k, v]) => `<button class="chip ${k === scanType ? 'active' : ''}" data-t="${k}">${v.label}</button>`).join('')}</div>
     <div class="card">
       <p class="muted" style="margin-top:0">${esc(t.help)}</p>
-      <input class="scan-input" id="scan" placeholder="Bipe o código de barras ou digite o nome do produto e Enter" autocomplete="off">
+      <input class="scan-input" id="scan" placeholder="Bipe o código de barras ou comece a digitar o nome do produto" autocomplete="off">
       <div id="scan-picker"></div>
       <div class="table-wrap" style="margin-top:14px"><table>
         <thead id="scan-head"></thead>
@@ -437,6 +437,12 @@ async function renderScanner(type = scanType) {
   $$('[data-t]').forEach((b) => b.addEventListener('click', () => guard(() => renderScanner(b.dataset.t))));
   drawScanLines();
   const scan = $('#scan');
+  productSuggest(scan, {
+    products: () => A.products.filter((p) => p.active || p.stock_units),
+    detail: (p) => `na câmara: ${boxesLabel(p.stock_units, p.units_per_box)}`,
+    clearOnPick: true,
+    onPick: (p) => { $('#scan-picker').innerHTML = ''; addScanUnits(p, 0); scan.focus(); },
+  });
   scan.focus();
   scan.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
@@ -671,6 +677,11 @@ async function renderStock() {
   };
   draw();
   $('#stock-search').addEventListener('input', (e) => { stockSearch = e.target.value; draw(); });
+  productSuggest($('#stock-search'), {
+    products: () => A.products.filter((p) => p.active || p.stock_units),
+    detail: (p) => `disp.: ${boxesLabel(p.available_units, p.units_per_box)}`,
+    onPick: (p) => { stockSearch = p.name; draw(); },
+  });
   $('#btn-stock-csv').addEventListener('click', () => downloadUrl('/api/admin/produtos.csv'));
   $('#btn-count').addEventListener('click', () => { scanType = 'inventario'; setView('movimentar'); });
   const op = $('#btn-opening');
@@ -733,7 +744,8 @@ async function renderMovements() {
     <p class="small muted">Lançamentos nunca são editados nem apagados. Para corrigir, use <strong>Estornar</strong>: o sistema lança o contrário, pelo mesmo valor.</p>
     <form class="card" id="mov-filter">
       <div class="form-grid">
-        <div class="field"><label>Produto</label><select name="product_id"><option value="">Todos</option>${A.products.map((p) => `<option value="${p.id}" ${String(p.id) === String(movFilter.product_id) ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Produto</label><input type="search" id="mov-product" placeholder="Todos — digite para buscar" value="${esc(productById(movFilter.product_id)?.name || '')}">
+          <input type="hidden" name="product_id" value="${esc(movFilter.product_id || '')}"></div>
         <div class="field"><label>Tipo</label><select name="type"><option value="">Todos</option>${Object.entries(MOV_LABEL).map(([k, v]) => `<option value="${k}" ${k === movFilter.type ? 'selected' : ''}>${v}</option>`).join('')}</select></div>
         <div class="field"><label>De</label><input type="date" name="from" value="${esc(movFilter.from || '')}"></div>
         <div class="field"><label>Até</label><input type="date" name="to" value="${esc(movFilter.to || '')}"></div>
@@ -761,7 +773,23 @@ async function renderMovements() {
         </tr>`).join('') || '<tr><td colspan="10" class="empty">Nenhuma movimentação encontrada.</td></tr>'}
       </tbody></table></div></div>`;
   const form = $('#mov-filter');
-  form.addEventListener('submit', (e) => { e.preventDefault(); movFilter = formData(form); guard(renderMovements); });
+  const movProduct = $('#mov-product');
+  const movProductId = $('input[name=product_id]', form);
+  movProduct.addEventListener('input', () => { movProductId.value = ''; });
+  productSuggest(movProduct, {
+    products: () => A.products,
+    onPick: (p) => { movProductId.value = p.id; form.requestSubmit(); },
+  });
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (movProduct.value.trim() && !movProductId.value) {
+      const [first, second] = matchProducts(A.products, movProduct.value, 2);
+      if (!first || second) return toast('Escolha o produto na lista que aparece ao digitar.', 'error');
+      movProductId.value = first.id;
+    }
+    movFilter = formData(form);
+    guard(renderMovements);
+  });
   $('#btn-mov-clear').addEventListener('click', () => { movFilter = {}; guard(renderMovements); });
   $('#btn-mov-csv').addEventListener('click', () => downloadUrl(`/api/admin/estoque/movimentos.csv${qs ? `?${qs}` : ''}`));
   $$('[data-order]').forEach((b) => b.addEventListener('click', () => guard(() => openOrder(Number(b.dataset.order)))));
@@ -825,6 +853,11 @@ async function renderProducts() {
   };
   draw();
   $('#prod-search').addEventListener('input', (e) => { productSearch = e.target.value; draw(); });
+  productSuggest($('#prod-search'), {
+    products: () => A.products,
+    detail: (p) => `${money(p.unit_price_cents)}/un${p.active ? '' : ' · inativo'}`,
+    onPick: (p) => { productSearch = p.name; draw(); },
+  });
   $('#btn-new-product').addEventListener('click', () => openProductForm(null));
   $('#btn-import').addEventListener('click', openImport);
   $('#btn-catalog').addEventListener('click', openCatalogLoader);
@@ -1399,6 +1432,11 @@ async function renderStoreStock() {
   };
   draw();
   $('#store-search').addEventListener('input', (e) => { storeSearch = e.target.value; draw(); });
+  productSuggest($('#store-search'), {
+    products: () => products,
+    detail: (p) => `livre: ${boxesLabel(Math.max(0, p.available_units), p.units_per_box)}`,
+    onPick: (p) => { storeSearch = p.name; draw(); },
+  });
   $('#btn-go-restock').addEventListener('click', () => setView('loja-repor'));
 }
 
@@ -1410,7 +1448,7 @@ async function renderRestock() {
     <div class="section-head"><h1>Repor ${esc(loc || 'loja')}</h1></div>
     <div class="card">
       <p class="muted" style="margin-top:0">Bipe o que você está levando da câmara para a loja (o código da caixa conta a caixa inteira), ou digite o nome do produto e Enter.</p>
-      <input class="scan-input" id="rs-scan" placeholder="Bipe o código de barras ou digite o nome" autocomplete="off">
+      <input class="scan-input" id="rs-scan" placeholder="Bipe o código de barras ou comece a digitar o nome" autocomplete="off">
       <div id="rs-picker"></div>
       <div class="table-wrap" style="margin-top:14px"><table>
         <thead><tr><th>Produto</th><th class="num">Caixas</th><th class="num">Unid.</th><th class="num">Total un</th><th></th></tr></thead>
@@ -1458,6 +1496,12 @@ async function renderRestock() {
   };
   draw();
   const scan = $('#rs-scan');
+  productSuggest(scan, {
+    products: () => products,
+    detail: (p) => `livre: ${boxesLabel(Math.max(0, p.available_units), p.units_per_box)}`,
+    clearOnPick: true,
+    onPick: (p) => { $('#rs-picker').innerHTML = ''; addUnits(p, 0); scan.focus(); },
+  });
   scan.focus();
   scan.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;

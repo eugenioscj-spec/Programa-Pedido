@@ -210,3 +210,97 @@ function resizeImage(file, max = 800) {
     img.src = url;
   });
 }
+
+// ---------------- sugestões de produto enquanto digita ----------------
+// Texto sem acento e em minúsculas, para "acai" achar "Açaí".
+const fold = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// Produtos que contêm o termo (nome, categoria, código de barras ou SKU); quem começa com o termo vem primeiro.
+function matchProducts(products, term, limit = 12) {
+  const t = fold(term).trim();
+  if (!t) return [];
+  const words = t.split(/\s+/);
+  const scored = [];
+  for (const p of products) {
+    const name = fold(p.name);
+    const hay = `${name} ${fold(p.category)} ${p.barcode || ''} ${p.box_barcode || ''} ${fold(p.sku)}`;
+    if (!words.every((w) => hay.includes(w))) continue;
+    scored.push([name.startsWith(t) ? 0 : name.includes(t) ? 1 : 2, name, p]);
+  }
+  scored.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]));
+  return scored.slice(0, limit).map((s) => s[2]);
+}
+
+// Destaca o termo digitado no nome.
+function markTerm(text, term) {
+  const t = fold(term).trim();
+  const i = t ? fold(text).indexOf(t) : -1;
+  if (i < 0) return esc(text);
+  return `${esc(text.slice(0, i))}<mark>${esc(text.slice(i, i + t.length))}</mark>${esc(text.slice(i + t.length))}`;
+}
+
+// Menu suspenso com os produtos que contêm o termo, abaixo do campo.
+// - products(): lista atual · onPick(p): o que fazer ao escolher · detail(p): texto à direita (estoque, preço…)
+// - Setas ↑↓ escolhem, Enter confirma o destacado, Esc fecha. Sem item destacado, o Enter segue o fluxo normal
+//   do campo (ex.: leitor de código de barras).
+function productSuggest(input, { products, onPick, detail = () => '', clearOnPick = false }) {
+  const wrap = document.createElement('div');
+  wrap.className = 'suggest-wrap';
+  if (input.style.maxWidth) { wrap.style.maxWidth = input.style.maxWidth; input.style.maxWidth = ''; }
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  input.setAttribute('autocomplete', 'off');
+  const menu = document.createElement('div');
+  menu.className = 'suggest-menu hidden';
+  menu.setAttribute('role', 'listbox');
+  wrap.appendChild(menu);
+  let items = [];
+  let active = -1;
+
+  const close = () => { menu.classList.add('hidden'); items = []; active = -1; };
+  const highlight = (i) => {
+    active = i;
+    $$('.suggest-item', menu).forEach((el, j) => el.classList.toggle('active', j === i));
+    const el = menu.children[i];
+    if (el) el.scrollIntoView({ block: 'nearest' });
+  };
+  const pick = (p) => {
+    close();
+    input.value = clearOnPick ? '' : p.name;
+    onPick(p);
+  };
+  const open = () => {
+    const term = input.value;
+    items = matchProducts(products() || [], term);
+    active = -1;
+    if (!fold(term).trim()) return close();
+    menu.innerHTML = items.length
+      ? items.map((p, i) => `
+        <div class="suggest-item" data-i="${i}" role="option">
+          ${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">` : '<span class="suggest-noimg"></span>'}
+          <span class="suggest-name">${markTerm(p.name, term)}<small>${esc(p.category || '')}</small></span>
+          <span class="suggest-detail">${detail(p) || ''}</span>
+        </div>`).join('')
+      : '<div class="suggest-empty">Nenhum produto com esse nome.</div>';
+    menu.classList.remove('hidden');
+    $$('.suggest-item', menu).forEach((el) => {
+      // mousedown (e não click) para escolher antes de o campo perder o foco
+      el.addEventListener('mousedown', (e) => { e.preventDefault(); pick(items[Number(el.dataset.i)]); });
+      el.addEventListener('mousemove', () => { if (active !== Number(el.dataset.i)) highlight(Number(el.dataset.i)); });
+    });
+  };
+
+  input.addEventListener('input', open);
+  input.addEventListener('focus', () => { if (input.value.trim()) open(); });
+  input.addEventListener('blur', () => setTimeout(close, 120));
+  // captura: roda antes do Enter do próprio campo, que só recebe o Enter quando nada está destacado
+  input.addEventListener('keydown', (e) => {
+    if (menu.classList.contains('hidden') || !items.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); highlight((active + 1) % items.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); highlight(active <= 0 ? items.length - 1 : active - 1); }
+    else if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopImmediatePropagation(); pick(items[active]); }
+    else if (e.key === 'Enter') close();
+  }, true);
+  return { close };
+}

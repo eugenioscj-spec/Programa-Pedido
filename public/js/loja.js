@@ -174,6 +174,17 @@ async function renderCatalog() {
     renderProductList();
   }));
   $('#search').addEventListener('input', (e) => { state.search = e.target.value; renderProductList(); });
+  productSuggest($('#search'), {
+    products: () => state.products,
+    detail: (p) => (p.in_stock ? money(p.unit_price_cents) : 'Esgotado'),
+    onPick: (p) => {
+      state.search = p.name;
+      state.category = 'Todos';
+      if (!p.in_stock) state.showSoldOut = true;
+      $$('.chip').forEach((x) => x.classList.toggle('active', x.dataset.cat === 'Todos'));
+      renderProductList();
+    },
+  });
   renderProductList();
   updateCartBar();
 }
