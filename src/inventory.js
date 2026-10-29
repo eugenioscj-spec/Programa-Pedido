@@ -354,7 +354,8 @@ function createInventory(db) {
   }
 
   // items: [{ product_id, unit_type: 'caixa'|'unidade', quantity }]
-  const createOrder = db.transaction(({ customerId, items, notes, deliveryDate, minOrderCents = 0, at }) => {
+  // allowProduct: linhas liberadas para o cliente (ver lineFilter em catalog.js).
+  const createOrder = db.transaction(({ customerId, items, notes, deliveryDate, minOrderCents = 0, at, allowProduct = () => true }) => {
     if (!Array.isArray(items) || items.length === 0) throw new BusinessError('Seu carrinho está vazio.');
 
     const needByProduct = new Map();
@@ -362,6 +363,7 @@ function createInventory(db) {
     for (const it of items) {
       const p = q.product.get(Number(it.product_id));
       if (!p || !p.active) throw new BusinessError('Um dos produtos do carrinho não está mais disponível.');
+      if (!allowProduct(p)) throw new BusinessError(`"${p.name}" não está liberado para o seu cadastro. Fale com a loja.`);
       const unitType = it.unit_type === 'caixa' ? 'caixa' : 'unidade';
       if (unitType === 'caixa' && !p.sell_box) throw new BusinessError(`"${p.name}" não é vendido por caixa.`);
       if (unitType === 'unidade' && !p.sell_unit) throw new BusinessError(`"${p.name}" é vendido somente por caixa fechada.`);

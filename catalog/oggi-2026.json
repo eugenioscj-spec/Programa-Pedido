@@ -62,7 +62,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Leite com Cacau",
+   "name": "Picolé Disney Mickey Leite com Cacau",
    "desc": "Embalagem Mickey",
    "slug": "disney-leite-cacau"
   },
@@ -70,7 +70,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Morango",
+   "name": "Picolé Disney Minnie Morango",
    "desc": "Embalagem Minnie",
    "slug": "disney-morango"
   },
@@ -78,7 +78,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Caramelo",
+   "name": "Picolé Disney Woody Caramelo",
    "desc": "Embalagem Woody",
    "slug": "disney-caramelo"
   },
@@ -86,7 +86,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Leite com Morango e Baunilha",
+   "name": "Picolé Disney Jessie Leite com Morango e Baunilha",
    "desc": "Embalagem Jessie",
    "slug": "disney-morango-baunilha"
   },
@@ -94,7 +94,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Uva Roxa",
+   "name": "Picolé Disney Ariel Uva Roxa",
    "desc": "Embalagem Ariel",
    "slug": "disney-uva"
   },
@@ -102,7 +102,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Baunilha",
+   "name": "Picolé Disney Linguado Baunilha",
    "desc": "Embalagem Linguado",
    "slug": "disney-baunilha"
   },
@@ -110,7 +110,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Iogurte de Morango",
+   "name": "Picolé Disney Homem-Aranha Iogurte de Morango",
    "desc": "Embalagem Homem-Aranha",
    "slug": "disney-iogurte-morango"
   },
@@ -118,7 +118,7 @@
    "category": "Disney",
    "price": 399,
    "upb": 24,
-   "name": "Picolé Disney Iogurte de Frutas Vermelhas",
+   "name": "Picolé Disney Spider-Gwen Iogurte de Frutas Vermelhas",
    "desc": "Embalagem Spider-Gwen",
    "slug": "disney-iogurte-frutas-vermelhas"
   },
@@ -637,7 +637,7 @@
   {
    "category": "Açaí",
    "price": 1225,
-   "upb": 4,
+   "upb": 12,
    "name": "Açaí 200g Banana",
    "desc": "Sorbet de açaí com banana",
    "slug": "acai-200-banana"
@@ -645,7 +645,7 @@
   {
    "category": "Açaí",
    "price": 1225,
-   "upb": 4,
+   "upb": 12,
    "name": "Açaí 200g Guaraná",
    "desc": "Sorbet de açaí com guaraná",
    "slug": "acai-200-guarana"

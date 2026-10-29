@@ -5,7 +5,9 @@ const state = {
   config: {},
   customer: null,
   products: [],
-  category: 'Todos',
+  view: 'catalogo', // ou 'favoritos'
+  type: 'Todos', // tipo escolhido (Picolés, Potes…)
+  line: 'Todas', // linha dentro do tipo (Sensa, Clássicos…)
   search: '',
   showSoldOut: false,
   cart: loadCart(),
@@ -88,15 +90,16 @@ function renderAuth(mode = 'login') {
         </div>
         ${mode === 'login' ? `
           <form id="form-auth">
-            <div class="field"><label>CNPJ</label><input name="cnpj" inputmode="numeric" placeholder="00.000.000/0000-00" required autocomplete="username"></div>
+            <div class="field"><label>CNPJ ou CPF</label><input name="cnpj" inputmode="numeric" placeholder="Só os números" required autocomplete="username"></div>
             <div class="field"><label>Senha</label><input name="senha" type="password" required autocomplete="current-password"></div>
             <button type="submit" class="btn-block">Entrar</button>
             <p class="small muted center" style="margin-top:12px">Esqueceu a senha? Fale com a loja${state.config.whatsapp ? ` pelo <a href="https://wa.me/${esc(state.config.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>` : ''}.</p>
           </form>` : `
           <form id="form-auth">
-            <div class="field"><label>CNPJ *</label><input name="cnpj" inputmode="numeric" placeholder="00.000.000/0000-00" required></div>
-            <div class="field"><label>Razão social *</label><input name="razao_social" required></div>
-            <div class="field"><label>Nome fantasia</label><input name="nome_fantasia"></div>
+            <div class="field"><label>CNPJ ou CPF *</label><input name="cnpj" inputmode="numeric" placeholder="Só os números" required>
+              <div class="small muted" style="margin-top:4px">Sem CNPJ? Use o CPF do responsável.</div></div>
+            <div class="field"><label id="lbl-razao">Razão social *</label><input name="razao_social" required></div>
+            <div class="field"><label>Nome do estabelecimento</label><input name="nome_fantasia"></div>
             <div class="form-grid">
               <div class="field"><label>Responsável</label><input name="contato"></div>
               <div class="field"><label>Telefone / WhatsApp *</label><input name="telefone" inputmode="tel" required></div>
@@ -112,6 +115,10 @@ function renderAuth(mode = 'login') {
   $$('[data-mode]').forEach((b) => b.addEventListener('click', () => renderAuth(b.dataset.mode)));
   const form = $('#form-auth');
   maskCnpj(form.cnpj);
+  const lbl = $('#lbl-razao');
+  if (lbl) form.cnpj.addEventListener('input', () => {
+    lbl.textContent = form.cnpj.value.replace(/\D/g, '').length === 11 ? 'Nome completo *' : 'Razão social *';
+  });
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     submitWith(form, async (data) => {
@@ -133,7 +140,7 @@ function renderPending() {
         <p>${state.customer.status === 'bloqueado'
           ? 'Seu acesso está bloqueado no momento. Fale com a loja para mais informações.'
           : `Olá, <strong>${esc(state.customer.nome_fantasia || state.customer.razao_social)}</strong>. Seu cadastro está em análise pela loja. Assim que for liberado você já poderá fazer pedidos por aqui.`}</p>
-        ${state.config.whatsapp ? `<a class="btn" href="https://wa.me/${esc(state.config.whatsapp)}?text=${encodeURIComponent(`Olá! Fiz meu cadastro no portal de pedidos. CNPJ ${fmtCnpj(state.customer.cnpj)}`)}" target="_blank" rel="noopener">Avisar a loja no WhatsApp</a>` : ''}
+        ${state.config.whatsapp ? `<a class="btn" href="https://wa.me/${esc(state.config.whatsapp)}?text=${encodeURIComponent(`Olá! Fiz meu cadastro no portal de pedidos. ${docLabel(state.customer.cnpj)} ${fmtCnpj(state.customer.cnpj)}`)}" target="_blank" rel="noopener">Avisar a loja no WhatsApp</a>` : ''}
         <p><button class="btn-link" id="btn-recheck">Já fui liberado — atualizar</button></p>
       </div>
     </div>`;
@@ -141,11 +148,13 @@ function renderPending() {
 }
 
 // ---------------- catálogo ----------------
-async function renderCatalog() {
-  setNav('catalogo');
+// view: 'catalogo' (tudo, por tipo › linha) ou 'favoritos'.
+async function renderCatalog(view = state.view) {
+  state.view = view;
+  setNav(view);
   app.innerHTML = '<div class="empty">Carregando produtos…</div>';
   try {
-    state.products = (await api('/api/catalogo')).products;
+    state.products = sortByHierarchy((await api('/api/catalogo')).products);
   } catch (e) {
     if (e.status === 401 || e.status === 403) return boot();
     app.innerHTML = `<div class="alert alert-error">${esc(e.message)}</div>`;
@@ -155,38 +164,75 @@ async function renderCatalog() {
   for (const key of Object.keys(state.cart)) if (!productById(key.split(':')[0])) delete state.cart[key];
   saveCart();
 
-  const categories = ['Todos', ...new Set(state.products.map((p) => p.category))];
+  const fav = view === 'favoritos';
   app.innerHTML = `
     <div id="catalog-view">
       <div class="section-head">
-        <h1>Catálogo</h1>
+        <h1>${fav ? '★ Meus favoritos' : 'Catálogo'}</h1>
         <span class="spacer"></span>
         <input id="search" type="search" placeholder="Buscar produto…" style="max-width:280px" value="${esc(state.search)}">
       </div>
       ${state.config.order_notice ? `<div class="alert alert-info small">${esc(state.config.order_notice)}</div>` : ''}
-      <div class="chips">${categories.map((c) => `<button class="chip ${c === state.category ? 'active' : ''}" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      ${fav ? '<p class="small muted">Seus produtos de sempre, para pedir mais rápido. Toque na ☆ de um produto no catálogo para guardar aqui.</p>'
+        : '<div id="type-chips"></div>'}
       <div class="products" id="product-list"></div>
       <p class="center" id="soldout-wrap"></p>
     </div>`;
-  $$('.chip').forEach((b) => b.addEventListener('click', () => {
-    state.category = b.dataset.cat;
-    $$('.chip').forEach((x) => x.classList.toggle('active', x === b));
-    renderProductList();
-  }));
+  if (!fav) drawTypeChips();
   $('#search').addEventListener('input', (e) => { state.search = e.target.value; renderProductList(); });
   productSuggest($('#search'), {
-    products: () => state.products,
+    products: () => (fav ? state.products.filter((p) => p.favorite) : state.products),
     detail: (p) => (p.in_stock ? money(p.unit_price_cents) : 'Esgotado'),
     onPick: (p) => {
       state.search = p.name;
-      state.category = 'Todos';
+      state.type = 'Todos';
+      state.line = 'Todas';
       if (!p.in_stock) state.showSoldOut = true;
-      $$('.chip').forEach((x) => x.classList.toggle('active', x.dataset.cat === 'Todos'));
+      if (!fav) drawTypeChips();
       renderProductList();
     },
   });
   renderProductList();
   updateCartBar();
+}
+
+// Filtros em dois níveis: tipo (Picolés, Potes…) e, dentro dele, a linha (Sensa, Clássicos…).
+function drawTypeChips() {
+  const tree = productTree(state.products);
+  if (state.type !== 'Todos' && !tree.some((t) => t.type === state.type)) { state.type = 'Todos'; state.line = 'Todas'; }
+  // cliente com um tipo só (ex.: só picolés): vai direto para as linhas dele
+  if (tree.length === 1) state.type = tree[0].type;
+  const lines = tree.find((t) => t.type === state.type)?.lines || [];
+  const chip = (attr, value, label, active) => `<button class="chip ${active ? 'active' : ''}" ${attr}="${esc(value)}">${esc(label)}</button>`;
+  $('#type-chips').innerHTML = `
+    ${tree.length > 1 ? `<div class="chips">${chip('data-ptype', 'Todos', 'Todos', state.type === 'Todos')}${tree.map((t) => chip('data-ptype', t.type, t.type, t.type === state.type)).join('')}</div>` : ''}
+    ${lines.length > 1 ? `<div class="chips chips-sub">${chip('data-line', 'Todas', `Todas as linhas`, state.line === 'Todas')}${lines.map((l) => chip('data-line', l, l, l === state.line)).join('')}</div>` : ''}`;
+  $$('[data-ptype]').forEach((b) => b.addEventListener('click', () => {
+    state.type = b.dataset.ptype;
+    state.line = 'Todas';
+    drawTypeChips();
+    renderProductList();
+  }));
+  $$('[data-line]').forEach((b) => b.addEventListener('click', () => {
+    state.line = b.dataset.line;
+    drawTypeChips();
+    renderProductList();
+  }));
+}
+
+async function toggleFavorite(p, btn) {
+  const favorite = !p.favorite;
+  try {
+    await api(`/api/favoritos/${p.id}`, { method: 'PUT', body: { favorite } });
+  } catch (e) {
+    return toast(e.message, 'error');
+  }
+  p.favorite = favorite;
+  if (state.view === 'favoritos' && !favorite) return renderProductList();
+  btn.classList.toggle('on', favorite);
+  btn.textContent = favorite ? '★' : '☆';
+  btn.setAttribute('aria-label', favorite ? 'Tirar dos favoritos' : 'Guardar nos favoritos');
+  toast(favorite ? 'Guardado nos favoritos.' : 'Removido dos favoritos.', 'ok');
 }
 
 function stockLabel(p) {
@@ -212,31 +258,35 @@ function buyLine(p, type) {
 }
 
 function renderProductList() {
-  const term = state.search.trim().toLowerCase();
-  const matching = state.products.filter((p) =>
-    (state.category === 'Todos' || p.category === state.category)
-    && (!term || p.name.toLowerCase().includes(term) || (p.barcode || '').includes(term)));
-  // esgotados ficam escondidos (e por último) até o cliente pedir para ver
-  const soldOut = matching.filter((p) => !p.in_stock);
-  const list = matching.filter((p) => p.in_stock).concat(state.showSoldOut ? soldOut : []);
+  const term = fold(state.search).trim();
+  const fav = state.view === 'favoritos';
+  const matching = state.products.filter((p) => (fav ? p.favorite
+    : (state.type === 'Todos' || p.product_type === state.type) && (state.line === 'Todas' || p.category === state.line))
+    && (!term || matchProducts([p], term).length));
+  // esgotados ficam escondidos (e por último) até o cliente pedir para ver; nos favoritos aparecem sempre
+  const soldOut = fav ? [] : matching.filter((p) => !p.in_stock);
+  const list = fav ? matching : matching.filter((p) => p.in_stock).concat(state.showSoldOut ? soldOut : []);
   const wrap = $('#soldout-wrap');
   wrap.innerHTML = soldOut.length
     ? `<button class="btn-secondary btn-sm" id="btn-soldout">${state.showSoldOut ? 'Esconder' : 'Mostrar'} esgotados (${soldOut.length})</button>` : '';
   if (soldOut.length) $('#btn-soldout').addEventListener('click', () => { state.showSoldOut = !state.showSoldOut; renderProductList(); });
   const el = $('#product-list');
   if (!list.length) {
-    el.innerHTML = `<div class="empty">${matching.length ? 'Nenhum produto disponível agora nesta categoria.' : 'Nenhum produto encontrado.'}</div>`;
+    el.innerHTML = `<div class="empty">${fav ? (term ? 'Nenhum favorito com esse nome.' : 'Você ainda não tem favoritos. No catálogo, toque na ☆ de um produto para guardar aqui.')
+      : matching.length ? 'Nenhum produto disponível agora nesta linha.' : 'Nenhum produto encontrado.'}</div>`;
     return;
   }
   el.innerHTML = list.map((p) => `
     <div class="product">
+      <button type="button" class="fav-btn ${p.favorite ? 'on' : ''}" data-fav="${p.id}" aria-label="${p.favorite ? 'Tirar dos favoritos' : 'Guardar nos favoritos'}">${p.favorite ? '★' : '☆'}</button>
       ${p.image_url ? `<img class="p-img" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy">` : '<div class="p-img-empty" aria-hidden="true"></div>'}
-      <div class="p-cat">${esc(p.category)}</div>
+      <div class="p-cat">${esc(productPath(p))}</div>
       <div class="p-name">${esc(p.name)}</div>
       ${p.description ? `<div class="small muted">${esc(p.description)}</div>` : ''}
       <div class="p-stock">${stockLabel(p)}</div>
       ${p.in_stock ? `${p.sell_box ? buyLine(p, 'caixa') : ''}${p.sell_unit ? buyLine(p, 'unidade') : ''}` : ''}
     </div>`).join('');
+  $$('[data-fav]', el).forEach((b) => b.addEventListener('click', () => toggleFavorite(productById(b.dataset.fav), b)));
   $$('.stepper', el).forEach((st) => {
     const p = productById(st.dataset.id);
     const type = st.dataset.type;
@@ -299,14 +349,14 @@ function renderCheckout(unavailable = null) {
       </div>
       <form class="card" id="form-checkout">
         <h2>Finalizar</h2>
-        <p class="small muted">Pedido de <strong>${esc(state.customer.nome_fantasia || state.customer.razao_social)}</strong> · CNPJ ${esc(fmtCnpj(state.customer.cnpj))}</p>
+        <p class="small muted">Pedido de <strong>${esc(state.customer.nome_fantasia || state.customer.razao_social)}</strong> · ${docLabel(state.customer.cnpj)} ${esc(fmtCnpj(state.customer.cnpj))}</p>
         ${min && total < min ? `<div class="alert alert-warn">Pedido mínimo: <strong>${money(min)}</strong>. Faltam ${money(min - total)}.</div>` : ''}
         <div class="field"><label>Data desejada de entrega/retirada</label><input type="date" name="delivery_date" min="${tomorrow}" value="${esc(prev.delivery_date || '')}"></div>
         <div class="field"><label>Observações</label><textarea name="notes" placeholder="Ex.: entregar pela manhã, retirar na loja…">${esc(prev.notes || '')}</textarea></div>
         <button type="submit" class="btn-block btn-ok" ${blocked ? 'disabled' : ''}>Enviar pedido · ${money(total)}</button>
       </form>
     </div>`;
-  $('#btn-back').addEventListener('click', renderCatalog);
+  $('#btn-back').addEventListener('click', () => renderCatalog());
   $$('[data-remove]').forEach((b) => b.addEventListener('click', () => {
     delete state.cart[b.dataset.remove];
     saveCart();
@@ -415,7 +465,7 @@ async function renderOrders() {
     }
     saveCart();
     toast('Itens adicionados ao carrinho. Confira a disponibilidade.', 'ok');
-    renderCatalog().then(() => {
+    renderCatalog('catalogo').then(() => {
       // ajusta ao estoque disponível
       for (const key of Object.keys(state.cart)) {
         const [id, type] = key.split(':');
@@ -448,7 +498,7 @@ async function boot() {
 
 $$('#nav [data-view]').forEach((b) => b.addEventListener('click', () => {
   if (b.dataset.view === 'pedidos') renderOrders();
-  else renderCatalog();
+  else renderCatalog(b.dataset.view);
 }));
 $('#btn-logout').addEventListener('click', async () => {
   await api('/api/cliente/logout', { method: 'POST' }).catch(() => {});

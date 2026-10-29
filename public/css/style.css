@@ -201,6 +201,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
   display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow);
 }
+.chips-sub { margin-top: -6px; }
+.chips-sub .chip { padding: 4px 12px; font-size: .88rem; }
+.product { position: relative; }
+.fav-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 1; width: 38px; height: 38px; padding: 0; border-radius: 50%;
+  background: rgba(255, 255, 255, .92); border: 1px solid var(--line); color: var(--muted); font-size: 1.25rem; line-height: 1;
+}
+.fav-btn:hover { background: #fff; color: #e0a100; }
+.fav-btn.on { color: #e0a100; border-color: #f1d27a; }
 .product .p-cat { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .product .p-name { font-weight: 700; font-size: 1.02rem; }
 .product .p-stock { font-size: .82rem; }
@@ -297,3 +306,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .suggest-name mark { background: none; color: var(--brand); font-weight: 700; padding: 0; }
 .suggest-detail { font-size: .8rem; color: var(--muted); text-align: right; white-space: nowrap; }
 .suggest-empty { padding: 10px 12px; color: var(--muted); font-size: .9rem; }
+
+/* Linhas com quantidade acima do disponível */
+tr.row-warn td { background: var(--warn-soft); }
+tr.row-danger td { background: var(--danger-soft); }
+.over-msg { color: var(--warn); font-weight: 600; margin-top: 2px; }
+tr.row-danger .over-msg { color: var(--danger); }
+
+/* Linhas liberadas por cliente */
+.lines-box { border: 1px solid var(--line); border-radius: 9px; padding: 8px 12px; max-height: 300px; overflow-y: auto; }
+.lines-type { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.lines-type:last-child { border-bottom: 0; }
+.lines-sub { display: flex; flex-wrap: wrap; gap: 2px 16px; padding-left: 24px; margin-top: 2px; }
+.lines-sub .check { font-weight: 400; color: var(--text); margin: 0; }

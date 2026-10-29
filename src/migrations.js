@@ -7,6 +7,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { productTypeOf } = require('./catalog');
 
 const LOSS_REASONS = [
   ['Vencimento', 0],
@@ -88,6 +89,18 @@ const LOJA2 = {
   nome_fantasia: 'Loja 2',
   notes: 'Loja própria ligada à câmara. Os pedidos dela vão virar transferência para o estoque da loja (a desenvolver).',
 };
+
+// Picolés Disney: o personagem da embalagem passa a fazer parte do nome.
+const DISNEY_NAMES = [
+  ['disney-leite-cacau', 'Picolé Disney Leite com Cacau', 'Picolé Disney Mickey Leite com Cacau'],
+  ['disney-morango', 'Picolé Disney Morango', 'Picolé Disney Minnie Morango'],
+  ['disney-caramelo', 'Picolé Disney Caramelo', 'Picolé Disney Woody Caramelo'],
+  ['disney-morango-baunilha', 'Picolé Disney Leite com Morango e Baunilha', 'Picolé Disney Jessie Leite com Morango e Baunilha'],
+  ['disney-uva', 'Picolé Disney Uva Roxa', 'Picolé Disney Ariel Uva Roxa'],
+  ['disney-baunilha', 'Picolé Disney Baunilha', 'Picolé Disney Linguado Baunilha'],
+  ['disney-iogurte-morango', 'Picolé Disney Iogurte de Morango', 'Picolé Disney Homem-Aranha Iogurte de Morango'],
+  ['disney-iogurte-frutas-vermelhas', 'Picolé Disney Iogurte de Frutas Vermelhas', 'Picolé Disney Spider-Gwen Iogurte de Frutas Vermelhas'],
+];
 
 const MIGRATIONS = [
   {
@@ -420,6 +433,37 @@ const MIGRATIONS = [
       // A versão 6 foi ao ar com um dígito trocado (65.532.954/0002-46).
       if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(LOJA2.cnpj)) return;
       db.prepare("UPDATE customers SET cnpj = ? WHERE cnpj = '65532954000246'").run(LOJA2.cnpj);
+    },
+  },
+  {
+    version: 8,
+    name: 'Tipo do produto (Picolés › linha), favoritos e linhas liberadas por cliente, Disney com personagem, açaí 200g com 12/cx',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name);
+      if (!cols.includes('product_type')) db.exec("ALTER TABLE products ADD COLUMN product_type TEXT NOT NULL DEFAULT 'Outros'");
+      const setType = db.prepare('UPDATE products SET product_type = ? WHERE id = ?');
+      for (const p of db.prepare('SELECT id, name FROM products').all()) setType.run(productTypeOf(p.name), p.id);
+
+      // Linhas que o cliente pode ver e pedir. NULL = todas. Lista JSON de "Tipo" (o tipo inteiro,
+      // inclusive linhas novas) ou "Tipo|Linha" (só aquela linha).
+      const ccols = db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name);
+      if (!ccols.includes('allowed_lines')) db.exec('ALTER TABLE customers ADD COLUMN allowed_lines TEXT');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS customer_favorites (
+          customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+          product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (customer_id, product_id)
+        );
+      `);
+
+      // Disney: nome do personagem da embalagem no nome (só se o nome ainda for o do catálogo).
+      for (const [slug, from, to] of DISNEY_NAMES) {
+        db.prepare('UPDATE products SET name = ? WHERE sku = ? AND name = ?').run(to, `OG26-${slug.toUpperCase()}`, from);
+      }
+      // Açaí 200g: 12 unidades por caixa. O preço da caixa acompanha (unidade × 12), como no catálogo.
+      db.prepare(`UPDATE products SET units_per_box = 12, box_price_cents = unit_price_cents * 12, updated_at = datetime('now')
+        WHERE sku IN ('OG26-ACAI-200-BANANA', 'OG26-ACAI-200-GUARANA') AND units_per_box = 4`).run();
     },
   },
 ];

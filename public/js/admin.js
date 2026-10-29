@@ -22,7 +22,7 @@ const MOV_LABEL = {
 };
 
 async function loadProducts() {
-  A.products = (await api('/api/admin/produtos')).products;
+  A.products = sortByHierarchy((await api('/api/admin/produtos')).products);
   return A.products;
 }
 const productById = (id) => A.products.find((p) => p.id === Number(id));
@@ -165,7 +165,7 @@ async function renderDashboard() {
         <div class="table-wrap"><table>
           <thead><tr><th>Produto</th><th class="num">Disponível</th><th class="num hide-sm">Mínimo</th><th></th></tr></thead>
           <tbody>${d.lowStock.map((p) => `
-            <tr><td>${esc(p.name)}<div class="small muted">${esc(p.category)}</div></td>
+            <tr><td>${esc(p.name)}<div class="small muted">${esc(productPath(p))}</div></td>
               <td class="num nowrap">${boxesLabel(p.available_units, p.units_per_box)}</td>
               <td class="num nowrap hide-sm">${boxesLabel(p.min_stock, p.units_per_box)}</td>
               <td>${stockTag(p)}</td></tr>`).join('')}
@@ -218,7 +218,7 @@ async function openOrder(id) {
   const m = openModal(`
     <div class="modal-head"><h2>Pedido #${o.id}</h2>${statusTag(o.status)}<button class="modal-close" data-close>×</button></div>
     <div class="grid grid-2" style="gap:6px 16px">
-      <div><strong>${esc(o.razao_social)}</strong>${o.nome_fantasia ? `<div>${esc(o.nome_fantasia)}</div>` : ''}<div class="small muted">CNPJ ${esc(fmtCnpj(o.cnpj))}</div></div>
+      <div><strong>${esc(o.razao_social)}</strong>${o.nome_fantasia ? `<div>${esc(o.nome_fantasia)}</div>` : ''}<div class="small muted">${docLabel(o.cnpj)} ${esc(fmtCnpj(o.cnpj))}</div></div>
       <div class="small">
         ${o.contato ? `${esc(o.contato)} · ` : ''}${esc(o.telefone || '')}
         ${o.endereco ? `<div>${esc(o.endereco)}${o.cidade ? ` — ${esc(o.cidade)}` : ''}</div>` : ''}
@@ -282,7 +282,7 @@ function printOrder(o) {
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Pedido ${o.id}</title>
     <style>body{font-family:system-ui,Arial,sans-serif;padding:20px;color:#000}table{width:100%;border-collapse:collapse;margin-top:12px}td,th{border-bottom:1px solid #999;padding:6px;text-align:left;font-size:14px}h1{margin:0 0 4px}</style></head>
     <body><h1>Pedido #${o.id} — ${esc(STATUS_LABEL[o.status])}</h1>
-    <div><strong>${esc(o.razao_social)}</strong>${o.nome_fantasia ? ` (${esc(o.nome_fantasia)})` : ''} · CNPJ ${esc(fmtCnpj(o.cnpj))}</div>
+    <div><strong>${esc(o.razao_social)}</strong>${o.nome_fantasia ? ` (${esc(o.nome_fantasia)})` : ''} · ${docLabel(o.cnpj)} ${esc(fmtCnpj(o.cnpj))}</div>
     <div>${esc(o.contato || '')} ${esc(o.telefone || '')} · ${esc(o.endereco || '')} ${esc(o.cidade || '')}</div>
     <div>Pedido em ${fmtDate(o.created_at)}${o.delivery_date ? ` · Entrega: ${fmtDate(o.delivery_date, false)}` : ''}</div>
     ${o.notes ? `<p><strong>Obs.:</strong> ${esc(o.notes)}</p>` : ''}
@@ -537,9 +537,11 @@ function drawScanLines(highlightId) {
     const un = l.units - cx * upb;
     const value = scanLineValue(l);
     const needsOpening = isIn && !p.has_cost && p.stock_units > 0;
-    return `<tr ${l.product_id === highlightId ? 'style="background:var(--ok-soft)"' : ''}>
+    const over = isOut ? outExcess(l) : null;
+    return `<tr class="${over ? `row-${over.level}` : ''}" ${l.product_id === highlightId && !over ? 'style="background:var(--ok-soft)"' : ''}>
       <td>${esc(p.name)}<div class="small muted">${upb > 1 ? `Caixa c/ ${upb} un` : 'Unidade'}${p.barcode ? ` · <span class="mono">${esc(p.barcode)}</span>` : ''}
-        ${!isIn ? ` · estoque ${boxesLabel(p.stock_units, upb)}` : ''}</div></td>
+        ${!isIn ? ` · estoque ${boxesLabel(p.stock_units, upb)}` : ''}</div>
+        ${over ? `<div class="small over-msg">⚠ ${esc(over.message)}</div>` : ''}</td>
       ${isInv ? `<td class="num nowrap">${boxesLabel(p.stock_units, upb)}</td>` : ''}
       <td class="num"><input type="number" min="0" value="${cx}" data-cx="${idx}" class="qty-input" ${upb <= 1 ? 'disabled' : ''}></td>
       <td class="num"><input type="number" min="0" value="${un}" data-un="${idx}" class="qty-input"></td>
@@ -564,10 +566,13 @@ function drawScanLines(highlightId) {
   $('#scan-foot').innerHTML = isInv ? '' : `<tr class="total-row"><td>${scanLines.length} produto(s)</td><td></td><td></td><td class="num">${totalUnits}</td>
     ${isIn ? `<td></td><td class="num nowrap">${money(totalValue)}</td>` : ''}${isOut ? `<td class="num nowrap">${money(totalValue)}</td>` : ''}<td></td></tr>`;
   const limit = A.options.note_threshold_cents;
+  const excess = isOut ? scanLines.map(outExcess).filter(Boolean) : [];
   let hint = '';
   if (isOut && limit && totalValue > limit) hint = `Saída acima de ${money(limit)}: a observação é obrigatória.`;
   if (isIn && values.some((v) => v === 0)) hint = 'Há item com custo zero (bonificação): a observação é obrigatória.';
-  $('#scan-hint').innerHTML = hint ? `<span class="tag tag-low">${esc(hint)}</span>` : '';
+  $('#scan-hint').innerHTML = (excess.length ? `<div class="alert ${excess.some((x) => x.level === 'danger') ? 'alert-error' : 'alert-warn'}">
+      <strong>Atenção: ${excess.length} produto(s) acima do disponível na câmara.</strong> Confira as linhas marcadas.</div>` : '')
+    + (hint ? `<span class="tag tag-low">${esc(hint)}</span>` : '');
 
   const recompute = (idx) => {
     const p = productById(scanLines[idx].product_id);
@@ -583,6 +588,22 @@ function drawScanLines(highlightId) {
   $$('[data-ocost]', body).forEach((i) => i.addEventListener('change', () => { scanLines[Number(i.dataset.ocost)].opening_cost = i.value; }));
   $$('[data-oper]', body).forEach((i) => i.addEventListener('change', () => { scanLines[Number(i.dataset.oper)].opening_cost_per = i.value; }));
   $$('[data-del]', body).forEach((b) => b.addEventListener('click', () => { scanLines.splice(Number(b.dataset.del), 1); drawScanLines(); }));
+}
+
+// Saída maior que o disponível: acima do físico a saída é recusada; entre o disponível e o físico
+// ela usa unidades já reservadas para pedidos de clientes.
+function outExcess(l) {
+  const p = productById(l.product_id);
+  const free = Math.max(0, p.available_units ?? p.stock_units);
+  if (l.units <= free) return null;
+  const upb = p.units_per_box;
+  if (l.units > p.stock_units) {
+    return { level: 'danger', name: p.name, message: `Ultrapassa o estoque: há só ${boxesLabel(p.stock_units, upb)} na câmara. A saída não será aceita.` };
+  }
+  return {
+    level: 'warn', name: p.name,
+    message: `Ultrapassa o disponível: ${boxesLabel(free, upb)} livre; ${boxesLabel(p.reserved_units, upb)} reservado para pedidos de clientes.`,
+  };
 }
 
 async function confirmScan() {
@@ -614,7 +635,11 @@ async function confirmScan() {
       if (scanType === 'transferencia' && !val('scan-location')) return toast('Escolha a loja de destino.', 'error');
       if (scanType === 'perda' && !val('scan-reason')) return toast('Escolha o motivo da perda.', 'error');
       if (scanType === 'saida_sem_venda' && !val('scan-subtype')) return toast('Escolha o tipo da saída.', 'error');
-      if (!confirm(`${t.button}: ${lines.length} produto(s), ${total} unidades?`)) return;
+      const excess = lines.map(outExcess).filter(Boolean);
+      const blocked = excess.filter((x) => x.level === 'danger');
+      if (blocked.length) return toast(`Quantidade maior que o estoque da câmara: ${blocked.map((x) => x.name).join(', ')}.`, 'error');
+      const warn = excess.length ? `\n\nATENÇÃO: acima do disponível (vai usar o que está reservado para pedidos):\n${excess.map((x) => `• ${x.name}`).join('\n')}` : '';
+      if (!confirm(`${t.button}: ${lines.length} produto(s), ${total} unidades?${warn}`)) return;
       await api('/api/admin/estoque/saida', {
         method: 'POST',
         body: {
@@ -663,7 +688,7 @@ async function renderStock() {
       const avg = avgCost(p);
       return `
       <tr>
-        <td>${esc(p.name)}<div class="small muted">${esc(p.category)}${p.barcode ? ` · <span class="mono">${esc(p.barcode)}</span>` : ''}</div></td>
+        <td>${esc(p.name)}<div class="small muted">${esc(productPath(p))}${p.barcode ? ` · <span class="mono">${esc(p.barcode)}</span>` : ''}</div></td>
         <td class="num nowrap">${boxesLabel(p.stock_units, p.units_per_box)}<div class="small muted">${p.stock_units} un</div></td>
         <td class="num nowrap hide-sm">${p.reserved_units ? boxesLabel(p.reserved_units, p.units_per_box) : '—'}</td>
         <td class="num nowrap"><strong>${boxesLabel(p.available_units, p.units_per_box)}</strong></td>
@@ -701,7 +726,7 @@ async function openOpeningCost() {
       <thead><tr><th>Produto</th><th class="num">Saldo</th><th>Custo</th><th></th></tr></thead>
       <tbody>${products.map((p) => `
         <tr data-row="${p.id}">
-          <td>${esc(p.name)}<div class="small muted">${esc(p.category)}${p.last_entry_unit_cost ? ` · última entrada: ${moneyPrecise(p.last_entry_unit_cost)}/un` : ''}</div></td>
+          <td>${esc(p.name)}<div class="small muted">${esc(productPath(p))}${p.last_entry_unit_cost ? ` · última entrada: ${moneyPrecise(p.last_entry_unit_cost)}/un` : ''}</div></td>
           <td class="num nowrap">${boxesLabel(p.stock_units, p.units_per_box)}</td>
           <td class="nowrap"><input inputmode="decimal" placeholder="R$" class="money-input" data-oc="${p.id}">
             <select class="per-select" data-ocp="${p.id}"><option value="caixa">por caixa</option><option value="unidade">por un</option></select></td>
@@ -840,7 +865,7 @@ async function renderProducts() {
     $('#prod-body').innerHTML = list.map((p) => `
       <tr class="clickable" data-id="${p.id}" ${p.active ? '' : 'style="opacity:.5"'}>
         <td style="width:52px">${thumb(p)}</td>
-        <td>${esc(p.name)}<div class="small muted">${esc(p.category)}${p.sku ? ` · ${esc(p.sku)}` : ''}${p.active ? '' : ' · INATIVO'}</div></td>
+        <td>${esc(p.name)}<div class="small muted">${esc(productPath(p))}${p.sku ? ` · ${esc(p.sku)}` : ''}${p.active ? '' : ' · INATIVO'}</div></td>
         <td class="hide-sm mono small">${esc(p.barcode || '—')}<br>${esc(p.box_barcode || '—')}</td>
         <td class="num">${p.units_per_box}</td>
         <td class="num nowrap">${money(p.unit_price_cents)}</td>
@@ -867,6 +892,7 @@ async function renderProducts() {
 function openProductForm(p, preset = {}, onSaved) {
   const v = p || { units_per_box: 1, sell_box: 1, sell_unit: 1, active: 1, min_stock: 0, category: '', retail_price_cents: null, ...preset };
   const categories = [...new Set(A.products.map((x) => x.category))];
+  const types = [...new Set([...PRODUCT_TYPES, ...A.products.map((x) => x.product_type).filter(Boolean)])];
   // preço da caixa calculado (unidade × quantidade) fica vazio: assim acompanha mudanças de preço e de unidades/caixa
   const boxDerived = !p || v.box_price_cents === v.unit_price_cents * v.units_per_box;
   let pendingImage = null;
@@ -884,7 +910,8 @@ function openProductForm(p, preset = {}, onSaved) {
       </div>
       <div class="field"><label>Nome *</label><input name="name" required value="${esc(v.name || '')}"></div>
       <div class="form-grid">
-        <div class="field"><label>Categoria / linha</label><input name="category" list="cat-list" value="${esc(v.category || '')}" placeholder="Sensa, Potes, Açaí…"><datalist id="cat-list">${categories.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div class="field"><label>Tipo</label><input name="product_type" list="type-list" value="${esc(v.product_type || '')}" placeholder="Picolés, Potes… (vazio = pelo nome)"><datalist id="type-list">${types.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div class="field"><label>Linha</label><input name="category" list="cat-list" value="${esc(v.category || '')}" placeholder="Sensa, Clássicos, Disney…"><datalist id="cat-list">${categories.map((c) => `<option value="${esc(c)}">`).join('')}</datalist></div>
         <div class="field"><label>SKU / código interno</label><input name="sku" value="${esc(v.sku || '')}"></div>
         <div class="field"><label>Código de barras da UNIDADE (EAN)</label><input name="barcode" class="mono" value="${esc(v.barcode || '')}" placeholder="Bipe aqui"></div>
         <div class="field"><label>Código de barras da CAIXA (DUN)</label><input name="box_barcode" class="mono" value="${esc(v.box_barcode || '')}" placeholder="Bipe aqui (opcional)"></div>
@@ -1073,7 +1100,8 @@ async function renderCustomers() {
     const list = customers.filter((c) => !t || `${c.razao_social} ${c.nome_fantasia || ''} ${c.cnpj} ${c.cidade || ''}`.toLowerCase().includes(t));
     $('#cust-body').innerHTML = list.map((c) => `
       <tr>
-        <td><strong>${esc(c.nome_fantasia || c.razao_social)}</strong><div class="small muted">${esc(c.razao_social)} · ${esc(fmtCnpj(c.cnpj))}</div></td>
+        <td><strong>${esc(c.nome_fantasia || c.razao_social)}</strong><div class="small muted">${esc(c.razao_social)} · ${docLabel(c.cnpj)} ${esc(fmtCnpj(c.cnpj))}</div>
+          ${c.allowed_lines ? `<div class="small"><span class="tag tag-low">vê só: ${esc(c.allowed_lines.map((x) => x.replace('|', ' › ')).join(', '))}</span></div>` : ''}</td>
         <td class="hide-sm small">${esc(c.contato || '')} ${esc(c.telefone || '')}<div class="muted">${esc(c.cidade || '')}</div></td>
         <td class="num">${c.order_count}</td>
         <td>${statusTag(c.status)}</td>
@@ -1087,22 +1115,50 @@ async function renderCustomers() {
       toast('Cliente aprovado! Avise pelo WhatsApp que já pode pedir.', 'ok');
       renderCustomers();
     })));
-    $$('[data-edit]').forEach((b) => b.addEventListener('click', () => openCustomerForm(customers.find((c) => c.id === Number(b.dataset.edit)))));
+    $$('[data-edit]').forEach((b) => b.addEventListener('click', () => guard(() => openCustomerForm(customers.find((c) => c.id === Number(b.dataset.edit))))));
   };
   draw();
   $('#cust-search').addEventListener('input', (e) => draw(e.target.value));
-  $('#btn-new-customer').addEventListener('click', () => openCustomerForm(null));
+  $('#btn-new-customer').addEventListener('click', () => guard(() => openCustomerForm(null)));
 }
 
-function openCustomerForm(c) {
+// Linhas liberadas: árvore Tipo › Linha. Tipo marcado inteiro = "Tipo" (inclui linhas novas);
+// só algumas linhas = "Tipo|Linha". Tudo marcado = sem restrição (null).
+function allowedLinesHtml(tree, allowed) {
+  const has = (key) => !allowed || allowed.includes(key);
+  return tree.map(({ type, lines }) => {
+    const whole = has(type);
+    return `<div class="lines-type">
+      <label class="check"><input type="checkbox" data-ltype="${esc(type)}" ${whole || lines.every((l) => has(`${type}|${l}`)) ? 'checked' : ''}> <strong>${esc(type)}</strong></label>
+      ${lines.length > 1 || lines[0] !== type ? `<div class="lines-sub">${lines.map((l) => `<label class="check"><input type="checkbox" data-lline="${esc(`${type}|${l}`)}" ${whole || has(`${type}|${l}`) ? 'checked' : ''}> ${esc(l)}</label>`).join('')}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+function readAllowedLinesForm(root, tree) {
+  const out = [];
+  let all = true;
+  for (const { type, lines } of tree) {
+    const subs = $$(`[data-lline^="${CSS.escape(type)}|"]`, root).filter((x) => x.dataset.lline.split('|')[0] === type);
+    const typeBox = $(`[data-ltype="${CSS.escape(type)}"]`, root);
+    if (!subs.length) { if (typeBox.checked) out.push(type); else all = false; continue; }
+    const on = subs.filter((x) => x.checked).map((x) => x.dataset.lline);
+    if (on.length === lines.length) out.push(type);
+    else { all = false; out.push(...on); }
+  }
+  return all ? null : out;
+}
+
+async function openCustomerForm(c) {
+  await loadProducts();
+  const tree = productTree(A.products.filter((p) => p.active));
   const v = c || {};
   const m = openModal(`
     <div class="modal-head"><h2>${c ? 'Editar cliente' : 'Cadastrar cliente'}</h2><button class="modal-close" data-close>×</button></div>
     <form id="form-customer">
       <div class="form-grid">
-        <div class="field"><label>CNPJ *</label><input name="cnpj" value="${esc(fmtCnpj(v.cnpj || ''))}" ${c ? 'disabled' : 'required'}></div>
+        <div class="field"><label>CNPJ ou CPF *</label><input name="cnpj" inputmode="numeric" value="${esc(fmtCnpj(v.cnpj || ''))}" ${c ? 'disabled' : 'required'}></div>
         ${c ? `<div class="field"><label>Situação</label><select name="status">${['pendente', 'ativo', 'bloqueado'].map((s) => `<option value="${s}" ${s === v.status ? 'selected' : ''}>${STATUS_LABEL[s]}</option>`).join('')}</select></div>` : ''}
-        <div class="field"><label>Razão social *</label><input name="razao_social" required value="${esc(v.razao_social || '')}"></div>
+        <div class="field"><label>Razão social (ou nome, se CPF) *</label><input name="razao_social" required value="${esc(v.razao_social || '')}"></div>
         <div class="field"><label>Nome fantasia</label><input name="nome_fantasia" value="${esc(v.nome_fantasia || '')}"></div>
         <div class="field"><label>Responsável</label><input name="contato" value="${esc(v.contato || '')}"></div>
         <div class="field"><label>Telefone / WhatsApp</label><input name="telefone" value="${esc(v.telefone || '')}"></div>
@@ -1111,14 +1167,31 @@ function openCustomerForm(c) {
       </div>
       <div class="field"><label>Endereço</label><input name="endereco" value="${esc(v.endereco || '')}"></div>
       <div class="field"><label>Observações internas</label><input name="notes" value="${esc(v.notes || '')}"></div>
+      <div class="field"><label>Linhas que o cliente pode ver e pedir</label>
+        <div class="small muted" style="margin-bottom:6px">Desmarque o que ele não compra. Tipo inteiro marcado inclui as linhas novas que forem cadastradas.</div>
+        <div class="row" style="margin-bottom:6px"><button type="button" class="btn-secondary btn-sm" id="lines-all">Marcar tudo</button><button type="button" class="btn-secondary btn-sm" id="lines-none">Desmarcar tudo</button></div>
+        <div class="lines-box" id="lines-box">${allowedLinesHtml(tree, v.allowed_lines || null)}</div></div>
       <div class="field"><label>${c ? 'Nova senha (deixe vazio para manter)' : 'Senha inicial * (mín. 6)'}</label><input name="senha" type="text" ${c ? '' : 'required minlength="6"'} autocomplete="off"></div>
       <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
     </form>`);
   const form = $('#form-customer', m);
   if (!c) maskCnpj(form.cnpj);
+  const box = $('#lines-box', m);
+  // tipo liga/desliga todas as linhas dele; linhas atualizam o tipo
+  $$('[data-ltype]', box).forEach((t) => t.addEventListener('change', () => {
+    $$('[data-lline]', t.closest('.lines-type')).forEach((x) => { x.checked = t.checked; });
+  }));
+  $$('[data-lline]', box).forEach((x) => x.addEventListener('change', () => {
+    const group = x.closest('.lines-type');
+    $('[data-ltype]', group).checked = $$('[data-lline]', group).every((y) => y.checked);
+  }));
+  $('#lines-all', m).addEventListener('click', () => $$('input[type=checkbox]', box).forEach((x) => { x.checked = true; }));
+  $('#lines-none', m).addEventListener('click', () => $$('input[type=checkbox]', box).forEach((x) => { x.checked = false; }));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     submitWith(form, async (data) => {
+      data.allowed_lines = readAllowedLinesForm(box, tree);
+      if (Array.isArray(data.allowed_lines) && !data.allowed_lines.length) throw new Error('Libere ao menos uma linha para o cliente.');
       if (c) {
         if (!data.senha) delete data.senha;
         delete data.cnpj;
@@ -1409,7 +1482,7 @@ async function renderReports() {
 let storeSearch = '';
 async function renderStoreStock() {
   const { products, location: loc } = await api('/api/admin/loja/estoque');
-  A.products = products;
+  A.products = sortByHierarchy(products);
   app.innerHTML = `
     <div class="section-head"><h1>Estoque da câmara</h1><span class="spacer"></span>
       <input type="search" id="store-search" placeholder="Buscar produto…" style="max-width:260px" value="${esc(storeSearch)}">
@@ -1420,11 +1493,11 @@ async function renderStoreStock() {
       <tbody id="store-body"></tbody></table></div></div>`;
   const draw = () => {
     const term = storeSearch.toLowerCase();
-    const list = products.filter((p) => !term || p.name.toLowerCase().includes(term) || p.category.toLowerCase().includes(term) || (p.barcode || '').includes(term));
+    const list = A.products.filter((p) => !term || p.name.toLowerCase().includes(term) || p.category.toLowerCase().includes(term) || (p.barcode || '').includes(term));
     $('#store-body').innerHTML = list.map((p) => `
       <tr ${p.stock_units ? '' : 'style="opacity:.55"'}>
         <td style="width:52px">${thumb(p)}</td>
-        <td>${esc(p.name)}<div class="small muted">${esc(p.category)}</div></td>
+        <td>${esc(p.name)}<div class="small muted">${esc(productPath(p))}</div></td>
         <td class="num nowrap">${boxesLabel(p.stock_units, p.units_per_box)}</td>
         <td class="num nowrap hide-sm">${p.reserved_units ? boxesLabel(p.reserved_units, p.units_per_box) : '—'}</td>
         <td class="num nowrap"><strong>${boxesLabel(Math.max(0, p.available_units), p.units_per_box)}</strong></td>

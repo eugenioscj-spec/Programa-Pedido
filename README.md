@@ -4,7 +4,7 @@ Sistema web para a loja receber **pedidos de clientes empresa (B2B)** por um lin
 
 | Link | Para quem | O que faz |
 |---|---|---|
-| `https://SEU-ENDERECO/` | Clientes B2B | Cadastro por CNPJ, catálogo, pedido por **caixa fechada ou unidade**, histórico, repetir pedido |
+| `https://SEU-ENDERECO/` | Clientes B2B | Cadastro por **CNPJ ou CPF**, catálogo por **tipo › linha**, **favoritos**, pedido por **caixa fechada ou unidade**, histórico, repetir pedido |
 | `https://SEU-ENDERECO/admin` | Loja | Pedidos, separação com leitor, entrada com custo, saídas por destino, estoque a custo, relatórios, produtos com foto, clientes |
 
 ---
@@ -15,9 +15,16 @@ Sistema web para a loja receber **pedidos de clientes empresa (B2B)** por um lin
 |---|---|---|
 | **Master** | `/admin` | Tudo: pedidos, estoque com custo e faturamento potencial, relatórios, **Financeiro (DRE e DFC)**, produtos, clientes, usuários e configurações. |
 | **Loja** | `/admin` | Só o **estoque da câmara em quantidades** (sem custos nem preços) e **Repor loja**: registra o que levou da câmara para a loja dele (vira uma transferência para aquela loja). |
-| **Cliente B2B** | `/` | Só o catálogo e os próprios pedidos. Não vê quantidades em estoque. |
+| **Cliente B2B** | `/` | Só o catálogo (das linhas liberadas para ele), os favoritos e os próprios pedidos. Não vê quantidades em estoque. |
 
 O master cria os usuários em **Config. → Usuários do painel** (perfil Loja exige escolher a loja) e pode desativar ou trocar a senha. Sempre existe ao menos um master ativo.
+
+## Clientes, linhas liberadas e favoritos
+
+- **CNPJ ou CPF:** o cliente entra e se cadastra com qualquer um dos dois (CPF para estabelecimentos informais). Continua sendo cliente B2B.
+- **Tipo › Linha:** cada produto tem um **tipo** (Picolés, Potes, Açaí, Sundae, Cones, Bombons) e uma **linha** (Sensa, Clássicos, Disney…). O catálogo do cliente filtra primeiro pelo tipo e depois pela linha. Produto novo sem tipo recebe o tipo pelo começo do nome.
+- **Linhas liberadas:** em **Clientes → Editar**, o master escolhe o que cada cliente pode ver e pedir. Tipo inteiro marcado inclui as linhas que forem cadastradas depois; tudo marcado = sem restrição. O servidor também recusa pedido de produto fora das linhas liberadas.
+- **Favoritos:** o cliente toca na ☆ do produto e ele aparece na aba **★ Favoritos**, para pedir mais rápido.
 
 ## Financeiro: DRE e DFC (só master)
 

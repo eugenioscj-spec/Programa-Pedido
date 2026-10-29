@@ -10,7 +10,7 @@ const { hashPassword, verifyPassword, createSessionStore, createLoginLimiter } =
 const { createInventory, BusinessError, OUT_TYPES } = require('./inventory');
 const { createReports } = require('./reports');
 const { exportReport } = require('./export');
-const { loadOggiCatalog } = require('./catalog');
+const { loadOggiCatalog, productTypeOf, parseAllowedLines, lineFilter } = require('./catalog');
 const { createFinance, DRE_GROUPS, DFC_ACTIVITIES } = require('./finance');
 const { createBank } = require('./bank');
 const T = require('./time');
@@ -21,7 +21,8 @@ const IMPORT_COLUMNS = [
   ['codigo_caixa', 'Código de barras da CAIXA fechada (DUN-14). Opcional.', 18],
   ['sku', 'Código interno/referência da franquia. Opcional.', 10],
   ['nome', 'Nome do produto como o cliente vai ver. Obrigatório.', 34],
-  ['categoria', 'Ex.: Picolés, Potes, Cones, Açaí. Agrupa o catálogo.', 14],
+  ['tipo', 'Picolés, Potes, Açaí, Sundae, Cones, Bombons… Se ficar vazio, sai do começo do nome.', 12],
+  ['categoria', 'Linha do produto dentro do tipo. Ex.: Sensa, Clássicos, Disney, Seleções.', 14],
   ['unidades_caixa', 'Quantas unidades vêm em uma caixa fechada. Ex.: 24.', 14],
   ['preco_unidade', 'Preço de venda da unidade para o cliente B2B. Ex.: 4,50', 13],
   ['preco_caixa', 'Preço da caixa fechada. Se ficar vazio, usa unidade × quantidade.', 12],
@@ -165,14 +166,14 @@ function createApp(db, { testMode = false } = {}) {
   app.post('/api/cliente/cadastro', loginLimiter, (req, res) => {
     const b = req.body || {};
     const cnpj = U.onlyDigits(b.cnpj);
-    if (!U.isValidCnpj(cnpj)) throw new BusinessError('CNPJ inválido.');
+    if (!U.isValidDoc(cnpj)) throw new BusinessError('CNPJ ou CPF inválido. Confira os números.');
     const razao = U.cleanText(b.razao_social, 150);
-    if (!razao) throw new BusinessError('Informe a razão social.');
+    if (!razao) throw new BusinessError(cnpj.length === 11 ? 'Informe o nome completo.' : 'Informe a razão social.');
     const telefone = U.cleanText(b.telefone, 30);
     if (!telefone) throw new BusinessError('Informe um telefone/WhatsApp.');
     if (!b.senha || String(b.senha).length < 6) throw new BusinessError('A senha precisa ter ao menos 6 caracteres.');
     if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(cnpj)) {
-      throw new BusinessError('Este CNPJ já está cadastrado. Faça login ou fale com a loja.', 409);
+      throw new BusinessError(`Este ${U.docLabel(cnpj)} já está cadastrado. Faça login ou fale com a loja.`, 409);
     }
     const auto = getSettings(db).auto_approve_customers === '1';
     const info = db.prepare(`
@@ -191,7 +192,7 @@ function createApp(db, { testMode = false } = {}) {
     const cnpj = U.onlyDigits(req.body?.cnpj);
     const c = db.prepare('SELECT * FROM customers WHERE cnpj = ?').get(cnpj);
     if (!c || !verifyPassword(req.body?.senha || '', c.password_hash)) {
-      throw new BusinessError('CNPJ ou senha incorretos.', 401);
+      throw new BusinessError('CNPJ/CPF ou senha incorretos.', 401);
     }
     sessions.login(res, req, 'customer', c.id);
     res.json({ customer: publicCustomer(c) });
@@ -209,14 +210,21 @@ function createApp(db, { testMode = false } = {}) {
   });
 
   // Catálogo do cliente: NÃO informa quantidades, só se o produto está disponível para compra.
+  // Só as linhas liberadas para o cliente; "favorite" marca os favoritos dele.
   app.get('/api/catalogo', requireCustomer, (req, res) => {
+    const allowed = lineFilter(req.customer.allowed_lines);
+    const favorites = new Set(db.prepare('SELECT product_id FROM customer_favorites WHERE customer_id = ?')
+      .all(req.customer.id).map((r) => r.product_id));
     const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1 ORDER BY p.category, p.name`)
       .all()
+      .filter(allowed)
       .map(withAvailability)
       .map((p) => ({
         id: p.id,
         name: p.name,
+        product_type: p.product_type,
         category: p.category,
+        favorite: favorites.has(p.id),
         description: p.description,
         barcode: p.barcode,
         units_per_box: p.units_per_box,
@@ -229,6 +237,18 @@ function createApp(db, { testMode = false } = {}) {
         in_stock: p.available_units >= (p.sell_unit ? 1 : p.units_per_box),
       }));
     res.json({ products });
+  });
+
+  app.put('/api/favoritos/:id', requireCustomer, (req, res) => {
+    const id = idParam(req);
+    const p = db.prepare('SELECT * FROM products WHERE id = ? AND active = 1').get(id);
+    if (!p || !lineFilter(req.customer.allowed_lines)(p)) throw new BusinessError('Produto não encontrado.', 404);
+    if (req.body?.favorite === false) {
+      db.prepare('DELETE FROM customer_favorites WHERE customer_id = ? AND product_id = ?').run(req.customer.id, id);
+    } else {
+      db.prepare('INSERT OR IGNORE INTO customer_favorites (customer_id, product_id) VALUES (?, ?)').run(req.customer.id, id);
+    }
+    res.json({ ok: true, favorite: req.body?.favorite !== false });
   });
 
   // Confere o carrinho antes de enviar: devolve só os produtos sem a quantidade pedida.
@@ -249,6 +269,7 @@ function createApp(db, { testMode = false } = {}) {
       notes: U.cleanText(b.notes, 1000),
       deliveryDate,
       minOrderCents: Number(getSettings(db).min_order_cents) || 0,
+      allowProduct: lineFilter(req.customer.allowed_lines),
     });
     res.status(201).json({ order: loadOrder(orderId) });
   });
@@ -317,7 +338,7 @@ function createApp(db, { testMode = false } = {}) {
     const products = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1 ORDER BY p.category, p.name`).all()
       .map(withAvailability)
       .map((p) => ({
-        id: p.id, name: p.name, category: p.category, sku: p.sku, barcode: p.barcode, box_barcode: p.box_barcode,
+        id: p.id, name: p.name, product_type: p.product_type, category: p.category, sku: p.sku, barcode: p.barcode, box_barcode: p.box_barcode,
         units_per_box: p.units_per_box, stock_units: p.stock_units, reserved_units: p.reserved_units,
         available_units: p.available_units, image_url: p.image_url,
       }));
@@ -393,6 +414,7 @@ function createApp(db, { testMode = false } = {}) {
       sku: U.cleanText(b.sku !== undefined ? b.sku : existing.sku, 50),
       name,
       category: U.cleanText(b.category ?? existing.category, 60) || 'Geral',
+      product_type: U.cleanText(b.product_type, 40) || existing.product_type || productTypeOf(name),
       barcode: U.cleanBarcode(b.barcode !== undefined ? b.barcode : existing.barcode),
       box_barcode: U.cleanBarcode(b.box_barcode !== undefined ? b.box_barcode : existing.box_barcode),
       units_per_box: upb,
@@ -419,7 +441,7 @@ function createApp(db, { testMode = false } = {}) {
   function saveProduct(p, id = null) {
     if (id) {
       db.prepare(`
-        UPDATE products SET sku=@sku, name=@name, category=@category, barcode=@barcode, box_barcode=@box_barcode,
+        UPDATE products SET sku=@sku, name=@name, product_type=@product_type, category=@category, barcode=@barcode, box_barcode=@box_barcode,
           units_per_box=@units_per_box, unit_price_cents=@unit_price_cents, box_price_cents=@box_price_cents,
           retail_price_cents=@retail_price_cents, sell_unit=@sell_unit, sell_box=@sell_box, min_stock=@min_stock,
           active=@active, description=@description, updated_at=datetime('now')
@@ -427,9 +449,9 @@ function createApp(db, { testMode = false } = {}) {
       return id;
     }
     return Number(db.prepare(`
-      INSERT INTO products (sku, name, category, barcode, box_barcode, units_per_box, unit_price_cents, box_price_cents,
+      INSERT INTO products (sku, name, product_type, category, barcode, box_barcode, units_per_box, unit_price_cents, box_price_cents,
         retail_price_cents, sell_unit, sell_box, min_stock, active, description)
-      VALUES (@sku, @name, @category, @barcode, @box_barcode, @units_per_box, @unit_price_cents, @box_price_cents,
+      VALUES (@sku, @name, @product_type, @category, @barcode, @box_barcode, @units_per_box, @unit_price_cents, @box_price_cents,
         @retail_price_cents, @sell_unit, @sell_box, @min_stock, @active, @description)`).run(p).lastInsertRowid);
   }
 
@@ -482,6 +504,7 @@ function createApp(db, { testMode = false } = {}) {
             || (sku && db.prepare('SELECT * FROM products WHERE sku = ?').get(sku));
           const data = {
             name: pick(r, 'nome', 'produto', 'descricao'),
+            product_type: pick(r, 'tipo'),
             category: pick(r, 'categoria'),
             barcode,
             box_barcode: pick(r, 'codigo_caixa', 'dun', 'ean_caixa'),
@@ -529,7 +552,7 @@ function createApp(db, { testMode = false } = {}) {
     for (const p of rows) {
       ws.addRow({
         codigo_barras: p.barcode || '', codigo_caixa: p.box_barcode || '', sku: p.sku || '', nome: p.name,
-        categoria: p.category, unidades_caixa: p.units_per_box, preco_unidade: p.unit_price_cents / 100,
+        tipo: p.product_type || '', categoria: p.category, unidades_caixa: p.units_per_box, preco_unidade: p.unit_price_cents / 100,
         preco_caixa: p.box_price_cents / 100, preco_varejo: p.retail_price_cents === null || p.retail_price_cents === undefined ? '' : p.retail_price_cents / 100,
         estoque_minimo: p.min_stock,
         vende_unidade: p.sell_unit ? 'sim' : 'nao', vende_caixa: p.sell_box ? 'sim' : 'nao',
@@ -555,6 +578,7 @@ function createApp(db, { testMode = false } = {}) {
       { label: 'codigo_caixa', value: 'box_barcode' },
       { label: 'sku', value: 'sku' },
       { label: 'nome', value: 'name' },
+      { label: 'tipo', value: 'product_type' },
       { label: 'categoria', value: 'category' },
       { label: 'unidades_caixa', value: 'units_per_box' },
       { label: 'preco_unidade', value: (r) => U.centsToBr(r.unit_price_cents) },
@@ -831,28 +855,37 @@ function createApp(db, { testMode = false } = {}) {
   });
 
   // ---------- admin: clientes ----------
+  // null = todas as linhas; lista = só as escolhidas ("Tipo" ou "Tipo|Linha").
+  function readAllowedLines(value) {
+    if (value === null || value === undefined) return null;
+    if (!Array.isArray(value)) throw new BusinessError('Linhas liberadas inválidas.');
+    const list = [...new Set(value.map((v) => U.cleanText(v, 120)).filter(Boolean))];
+    if (!list.length) throw new BusinessError('Libere ao menos uma linha para o cliente (ou todas).');
+    return JSON.stringify(list);
+  }
+
   admin.get('/clientes', (req, res) => {
     const customers = db.prepare(`
       SELECT c.*, (SELECT COUNT(*) FROM orders WHERE customer_id = c.id AND status <> 'cancelado') AS order_count,
         (SELECT MAX(created_at) FROM orders WHERE customer_id = c.id) AS last_order_at
       FROM customers c ORDER BY CASE c.status WHEN 'pendente' THEN 0 ELSE 1 END, c.razao_social`).all()
-      .map(({ password_hash, ...c }) => c);
+      .map(({ password_hash, ...c }) => ({ ...c, allowed_lines: parseAllowedLines(c.allowed_lines) }));
     res.json({ customers });
   });
 
   admin.post('/clientes', (req, res) => {
     const b = req.body || {};
     const cnpj = U.onlyDigits(b.cnpj);
-    if (!U.isValidCnpj(cnpj)) throw new BusinessError('CNPJ inválido.');
-    if (!U.cleanText(b.razao_social)) throw new BusinessError('Informe a razão social.');
+    if (!U.isValidDoc(cnpj)) throw new BusinessError('CNPJ ou CPF inválido. Confira os números.');
+    if (!U.cleanText(b.razao_social)) throw new BusinessError('Informe a razão social (ou o nome, se for CPF).');
     if (!b.senha || String(b.senha).length < 6) throw new BusinessError('Defina uma senha inicial (mín. 6 caracteres).');
-    if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(cnpj)) throw new BusinessError('CNPJ já cadastrado.', 409);
+    if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(cnpj)) throw new BusinessError(`${U.docLabel(cnpj)} já cadastrado.`, 409);
     const info = db.prepare(`
-      INSERT INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, email, endereco, cidade, password_hash, status, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativo', ?)`).run(
+      INSERT INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, email, endereco, cidade, password_hash, status, notes, allowed_lines)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativo', ?, ?)`).run(
       cnpj, U.cleanText(b.razao_social, 150), U.cleanText(b.nome_fantasia, 150), U.cleanText(b.contato, 100),
       U.cleanText(b.telefone, 30), U.cleanText(b.email, 150), U.cleanText(b.endereco, 300), U.cleanText(b.cidade, 100),
-      hashPassword(b.senha), U.cleanText(b.notes, 500),
+      hashPassword(b.senha), U.cleanText(b.notes, 500), readAllowedLines(b.allowed_lines),
     );
     res.status(201).json({ id: Number(info.lastInsertRowid) });
   });
@@ -871,6 +904,9 @@ function createApp(db, { testMode = false } = {}) {
       val('razao_social', 150) || c.razao_social, val('nome_fantasia', 150), val('contato', 100), val('telefone', 30),
       val('email', 150), val('endereco', 300), val('cidade', 100), status, val('notes', 500), id,
     );
+    if (b.allowed_lines !== undefined) {
+      db.prepare('UPDATE customers SET allowed_lines = ? WHERE id = ?').run(readAllowedLines(b.allowed_lines), id);
+    }
     if (b.senha) {
       if (String(b.senha).length < 6) throw new BusinessError('A senha precisa ter ao menos 6 caracteres.');
       db.prepare('UPDATE customers SET password_hash = ? WHERE id = ?').run(hashPassword(b.senha), id);

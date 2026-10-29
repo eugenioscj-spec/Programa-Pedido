@@ -29,21 +29,45 @@ function fmtDate(sqlDate, withTime = true) {
     : d.toLocaleDateString('pt-BR', { timeZone: sqlDate.length > 10 ? TZ : 'UTC' });
 }
 
+// Documento do cliente: CNPJ (14 dígitos) ou CPF (11), para estabelecimentos informais.
 function fmtCnpj(c) {
   const d = String(c || '').replace(/\D/g, '');
+  if (d.length === 11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
   return d.length === 14 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : c;
 }
+const docLabel = (c) => (String(c || '').replace(/\D/g, '').length === 11 ? 'CPF' : 'CNPJ');
 
+// Máscara que acompanha a digitação: até 11 números é CPF, depois vira CNPJ.
 function maskCnpj(input) {
   input.addEventListener('input', () => {
     const d = input.value.replace(/\D/g, '').slice(0, 14);
     let v = d;
-    if (d.length > 12) v = d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})$/, '$1.$2.$3/$4-$5');
-    else if (d.length > 8) v = d.replace(/^(\d{2})(\d{3})(\d{3})(\d{0,4})$/, '$1.$2.$3/$4');
-    else if (d.length > 5) v = d.replace(/^(\d{2})(\d{3})(\d{0,3})$/, '$1.$2.$3');
-    else if (d.length > 2) v = d.replace(/^(\d{2})(\d{0,3})$/, '$1.$2');
+    if (d.length > 11) {
+      v = d.length > 12 ? d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})$/, '$1.$2.$3/$4-$5')
+        : d.replace(/^(\d{2})(\d{3})(\d{3})(\d{0,4})$/, '$1.$2.$3/$4');
+    } else if (d.length > 9) v = d.replace(/^(\d{3})(\d{3})(\d{3})(\d{0,2})$/, '$1.$2.$3-$4');
+    else if (d.length > 6) v = d.replace(/^(\d{3})(\d{3})(\d{0,3})$/, '$1.$2.$3');
+    else if (d.length > 3) v = d.replace(/^(\d{3})(\d{0,3})$/, '$1.$2');
     input.value = v;
   });
+}
+
+// Hierarquia do produto: Tipo › Linha (ex.: Picolés › Sensa). Ordem dos tipos no catálogo:
+const PRODUCT_TYPES = ['Picolés', 'Potes', 'Açaí', 'Sundae', 'Cones', 'Bombons'];
+const typeRank = (t) => (PRODUCT_TYPES.includes(t) ? PRODUCT_TYPES.indexOf(t) : PRODUCT_TYPES.length);
+const productPath = (p) => (!p.product_type || p.product_type === p.category ? p.category : `${p.product_type} › ${p.category}`);
+// Ordena por tipo, linha e nome.
+const sortByHierarchy = (list) => list.slice().sort((a, b) => typeRank(a.product_type) - typeRank(b.product_type)
+  || String(a.product_type).localeCompare(String(b.product_type)) || a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
+// Tipos e as linhas de cada um, na ordem do catálogo: [{ type, lines: [...] }]
+function productTree(products) {
+  const tree = new Map();
+  for (const p of sortByHierarchy(products)) {
+    const t = p.product_type || 'Outros';
+    if (!tree.has(t)) tree.set(t, []);
+    if (!tree.get(t).includes(p.category)) tree.get(t).push(p.category);
+  }
+  return [...tree].map(([type, lines]) => ({ type, lines }));
 }
 
 // Quantidade em unidades → "3 cx + 5 un"
@@ -223,7 +247,7 @@ function matchProducts(products, term, limit = 12) {
   const scored = [];
   for (const p of products) {
     const name = fold(p.name);
-    const hay = `${name} ${fold(p.category)} ${p.barcode || ''} ${p.box_barcode || ''} ${fold(p.sku)}`;
+    const hay = `${name} ${fold(p.product_type)} ${fold(p.category)} ${p.barcode || ''} ${p.box_barcode || ''} ${fold(p.sku)}`;
     if (!words.every((w) => hay.includes(w))) continue;
     scored.push([name.startsWith(t) ? 0 : name.includes(t) ? 1 : 2, name, p]);
   }
@@ -278,7 +302,7 @@ function productSuggest(input, { products, onPick, detail = () => '', clearOnPic
       ? items.map((p, i) => `
         <div class="suggest-item" data-i="${i}" role="option">
           ${p.image_url ? `<img src="${esc(p.image_url)}" alt="" loading="lazy">` : '<span class="suggest-noimg"></span>'}
-          <span class="suggest-name">${markTerm(p.name, term)}<small>${esc(p.category || '')}</small></span>
+          <span class="suggest-name">${markTerm(p.name, term)}<small>${esc(productPath(p))}</small></span>
           <span class="suggest-detail">${detail(p) || ''}</span>
         </div>`).join('')
       : '<div class="suggest-empty">Nenhum produto com esse nome.</div>';

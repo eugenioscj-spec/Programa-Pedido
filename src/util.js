@@ -14,6 +14,21 @@ function isValidCnpj(value) {
   return calc(12) === Number(c[12]) && calc(13) === Number(c[13]);
 }
 
+function isValidCpf(value) {
+  const c = onlyDigits(value);
+  if (c.length !== 11 || /^(\d)\1+$/.test(c)) return false;
+  const calc = (len) => {
+    const sum = [...c.slice(0, len)].reduce((s, d, i) => s + Number(d) * (len + 1 - i), 0);
+    const r = (sum * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return calc(9) === Number(c[9]) && calc(10) === Number(c[10]);
+}
+
+// Cliente pode ser empresa (CNPJ) ou estabelecimento informal (CPF).
+const isValidDoc = (value) => isValidCnpj(value) || isValidCpf(value);
+const docLabel = (value) => (onlyDigits(value).length === 11 ? 'CPF' : 'CNPJ');
+
 function formatCnpj(value) {
   const c = onlyDigits(value);
   if (c.length !== 14) return value;
@@ -84,4 +99,5 @@ function toCsv(rows, columns) {
 
 const centsToBr = (c) => (Number(c || 0) / 100).toFixed(2).replace('.', ',');
 
-module.exports = { onlyDigits, isValidCnpj, formatCnpj, toCents, cleanText, cleanBarcode, parseCsv, toCsv, centsToBr };
+module.exports = {
+  isValidCpf, isValidDoc, docLabel, onlyDigits, isValidCnpj, formatCnpj, toCents, cleanText, cleanBarcode, parseCsv, toCsv, centsToBr };

@@ -68,7 +68,7 @@ function seedTestData(db, { log = console.log } = {}) {
     const boxCost = (prod, factor = 0.55) => Math.round(prod.unit_price_cents * factor * prod.units_per_box);
     const stocked = [
       ['Picolé Sensa Brigadeiro', 6], ['Picolé Sensa Clássico', 4], ['Picolé Frutos Morango', 5], ['Picolé Frutos Limão', 4],
-      ['Picolé Disney Morango', 4], ['Picolé Delícia Chocolate', 3], ['Picolé Festa Melancia', 3], ['Pote Seleções Flocos', 10],
+      ['Picolé Disney Minnie Morango', 4], ['Picolé Delícia Chocolate', 3], ['Picolé Festa Melancia', 3], ['Pote Seleções Flocos', 10],
       ['Pote Tradicionais Napolitano', 8], ['Pote Duetto Frutas Vermelhas', 5], ['Top Sundae Chocolate', 4],
       ['Cone Giratto Crocante', 4], ['Açaí 200g Guaraná', 6],
     ];
@@ -96,7 +96,7 @@ function seedTestData(db, { log = console.log } = {}) {
     order(c2, [['Pote Tradicionais Napolitano', 'caixa', 2], ['Top Sundae Chocolate', 'caixa', 1], ['Açaí 200g Guaraná', 'caixa', 2]], 35);
     inv.dispatch({ type: 'transferencia', locationId: loja('Loja 1 - Centro'), lines: [{ product_id: p('Picolé Frutos Limão').id, units: 39 }, { product_id: p('Pote Seleções Flocos').id, units: 4 }], user, at: at(33, '08:15') });
     inv.dispatch({ type: 'perda', reasonId: reason('Descongelamento / quebra da cadeia de frio'), note: 'Freezer da porta desligou', lines: [{ product_id: p('Pote Duetto Frutas Vermelhas').id, units: 2 }], user, at: at(30, '18:40') });
-    order(c1, [['Picolé Disney Morango', 'caixa', 1], ['Cone Giratto Crocante', 'caixa', 1]], 28, { cancel: true });
+    order(c1, [['Picolé Disney Minnie Morango', 'caixa', 1], ['Cone Giratto Crocante', 'caixa', 1]], 28, { cancel: true });
 
     // segunda nota, com custo um pouco maior (o custo médio muda)
     inv.receive({
