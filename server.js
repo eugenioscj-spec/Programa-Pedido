@@ -31,6 +31,9 @@ if (db.prepare('SELECT COUNT(*) n FROM products').get().n === 0) {
   console.log(`Catálogo Oggi 2026 carregado: ${r.created} produto(s).`);
 }
 
+// Contas recorrentes: lança as parcelas que faltam (também roda ao abrir o Financeiro).
+require('./src/recurring').createRecurring(db).generate();
+
 // MODO_TESTE=sim: só mostra a faixa "Ambiente de teste". Não lança mais dados de exemplo
 // online; para isso use o "Testar no Windows/Mac" no próprio computador.
 const testMode = String(process.env.MODO_TESTE || '').toLowerCase() === 'sim';

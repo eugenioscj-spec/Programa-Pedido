@@ -1393,11 +1393,12 @@ const REPORT_TYPES = {
 };
 const R = { tipo: 'conciliacao', date: null, from: null, to: null };
 
-function monthRange(offset = 0) {
+// wholeMonth: o mês atual até o último dia (contas que ainda vão vencer), em vez de até hoje.
+function monthRange(offset = 0, wholeMonth = false) {
   const [y, m] = todayLocal().split('-').map(Number);
   const d = new Date(Date.UTC(y, m - 1 + offset, 1));
   const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
-  return [d.toISOString().slice(0, 10), offset === 0 ? todayLocal() : last.toISOString().slice(0, 10)];
+  return [d.toISOString().slice(0, 10), offset === 0 && !wholeMonth ? todayLocal() : last.toISOString().slice(0, 10)];
 }
 
 function reportCell(col, row) {
@@ -1608,14 +1609,15 @@ async function renderRestock() {
 const F = { tab: 'lancamentos', from: null, to: null, campo: 'competencia', status: '', kind: '', opts: null };
 
 async function renderFinance() {
-  if (!F.from) [F.from, F.to] = monthRange(0);
+  if (!F.from) [F.from, F.to] = monthRange(0, true);
   F.opts = await api('/api/admin/financeiro/opcoes');
-  const tabs = { lancamentos: 'Lançamentos', bancos: 'Bancos e conciliação', dre: 'DRE', dfc: 'DFC (caixa)', extratos: 'Extratos por banco', contas: 'Plano de contas' };
+  const tabs = { lancamentos: 'Lançamentos', recorrentes: 'Contas recorrentes', bancos: 'Bancos e conciliação', dre: 'DRE', dfc: 'DFC (caixa)', extratos: 'Extratos por banco', contas: 'Plano de contas' };
   app.innerHTML = `
     <div class="section-head"><h1>Financeiro</h1><span class="spacer"></span>
-      ${F.tab === 'lancamentos' ? '<button id="btn-new-entry">+ Novo lançamento</button>' : ''}</div>
+      ${F.tab === 'lancamentos' ? '<button id="btn-new-entry">+ Novo lançamento</button>' : ''}
+      ${F.tab === 'recorrentes' ? '<button id="btn-new-rec">+ Nova conta recorrente</button>' : ''}</div>
     <div class="chips">${Object.entries(tabs).map(([k, v]) => `<button class="chip ${k === F.tab ? 'active' : ''}" data-ft="${k}">${v}</button>`).join('')}</div>
-    ${F.tab !== 'contas' && F.tab !== 'bancos' ? `
+    ${!['contas', 'bancos', 'recorrentes'].includes(F.tab) ? `
     <form class="card" id="fin-filter"><div class="row">
       ${F.tab === 'lancamentos' ? `<div class="field"><label>Período por</label><select id="f-campo">
         <option value="competencia" ${F.campo === 'competencia' ? 'selected' : ''}>Competência</option>
@@ -1647,14 +1649,17 @@ async function renderFinance() {
     });
     $$('[data-fp]').forEach((b) => b.addEventListener('click', () => {
       if (b.dataset.fp === 'year') [F.from, F.to] = [`${todayLocal().slice(0, 4)}-01-01`, todayLocal()];
-      else [F.from, F.to] = monthRange(Number(b.dataset.fp));
+      else [F.from, F.to] = monthRange(Number(b.dataset.fp), true);
       guard(renderFinance);
     }));
     $$('[data-fexp]').forEach((b) => b.addEventListener('click', () => downloadUrl(`/api/admin/relatorios/${F.tab === 'extratos' ? 'bancos' : F.tab}?from=${F.from}&to=${F.to}&formato=${b.dataset.fexp}`)));
   }
   const nb = $('#btn-new-entry');
   if (nb) nb.addEventListener('click', () => openEntryForm(null));
+  const nr = $('#btn-new-rec');
+  if (nr) nr.addEventListener('click', () => openRecurrenceForm(null));
   if (F.tab === 'lancamentos') return renderEntries();
+  if (F.tab === 'recorrentes') return renderRecurrences();
   if (F.tab === 'contas') return renderAccounts();
   if (F.tab === 'bancos') return renderBanks();
   const { report } = await api(`/api/admin/relatorios/${F.tab === 'extratos' ? 'bancos' : F.tab}?from=${F.from}&to=${F.to}`);
@@ -1682,7 +1687,7 @@ async function renderEntries() {
         <tr>
           <td class="nowrap">${fmtDate(F.campo === 'pagamento' ? e.paid_date : F.campo === 'vencimento' ? e.due_date : e.competence_date, false)}</td>
           <td>${esc(e.account_name)}${e.location_name ? `<div class="small muted">${esc(e.location_name)}</div>` : ''}</td>
-          <td>${esc(e.description)}${e.counterparty ? `<div class="small muted">${esc(e.counterparty)}</div>` : ''}</td>
+          <td>${esc(e.description)}${e.recurrence_id ? ' <span class="tag tag-confirmado" title="Conta recorrente">↻ recorrente</span>' : ''}${e.counterparty ? `<div class="small muted">${esc(e.counterparty)}</div>` : ''}</td>
           <td class="num nowrap ${e.kind === 'receita' ? 'qty-pos' : 'qty-neg'}">${e.kind === 'receita' ? '' : '−'}${money(e.amount_cents)}</td>
           <td class="hide-sm nowrap">${e.due_date ? fmtDate(e.due_date, false) : '—'}</td>
           <td>${e.paid_date ? `<span class="tag tag-entregue">${e.kind === 'receita' ? 'recebido' : 'pago'} ${fmtDate(e.paid_date, false)}</span>`
@@ -1696,6 +1701,91 @@ async function renderEntries() {
     renderEntries();
   })));
   $$('[data-edit-entry]').forEach((b) => b.addEventListener('click', () => openEntryForm(entries.find((e) => e.id === Number(b.dataset.editEntry)))));
+}
+
+// Meses entre duas datas (só ano e mês): 2026-10-31 → 2026-11-05 = 1.
+const monthsBetween = (a, b) => (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + Number(b.slice(5, 7)) - Number(a.slice(5, 7));
+
+async function renderRecurrences() {
+  const { recurrences } = await api('/api/admin/financeiro/recorrentes');
+  const active = recurrences.filter((r) => r.active);
+  const monthly = (kind) => active.filter((r) => r.kind === kind).reduce((s, r) => s + r.amount_cents / r.interval_months, 0);
+  $('#fin-body').innerHTML = `
+    <p class="small muted">Contas que se repetem (aluguel, internet, salários, mensalidades…). O sistema lança sozinho as parcelas até o fim do mês seguinte,
+      e elas aparecem em <strong>Lançamentos</strong> para pagar. Alterar uma conta aqui muda as parcelas de hoje em diante que ainda estão em aberto.</p>
+    <div class="grid grid-4" style="margin-bottom:16px">
+      <div class="card stat"><div class="label">Despesas fixas por mês</div><div class="value qty-neg">${money(monthly('despesa'))}</div><div class="small muted">média mensal das ativas</div></div>
+      <div class="card stat"><div class="label">Receitas fixas por mês</div><div class="value qty-pos">${money(monthly('receita'))}</div></div>
+    </div>
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>Descrição</th><th>Conta</th><th class="num">Valor</th><th>Repete</th><th>Próximo vencimento</th><th class="hide-sm">Termina</th><th></th></tr></thead>
+      <tbody>${recurrences.map((r) => `
+        <tr ${r.active ? '' : 'style="opacity:.55"'}>
+          <td>${esc(r.description)}${r.counterparty ? `<div class="small muted">${esc(r.counterparty)}</div>` : ''}${r.active ? '' : ' <span class="tag tag-cancelado">encerrada</span>'}</td>
+          <td>${esc(r.account_name)}${r.location_name ? `<div class="small muted">${esc(r.location_name)}</div>` : ''}</td>
+          <td class="num nowrap ${r.kind === 'receita' ? 'qty-pos' : 'qty-neg'}">${r.kind === 'receita' ? '' : '−'}${money(r.amount_cents)}</td>
+          <td class="nowrap">${esc(r.interval_label)}<div class="small muted">dia ${Number(r.start_date.slice(8, 10))}${r.competence_offset ? ` · competência ${r.competence_offset < 0 ? 'no mês anterior' : 'no mês seguinte'}` : ''}</div></td>
+          <td class="nowrap">${r.next_due ? fmtDate(r.next_due, false) : '—'}${r.overdue ? `<div><span class="tag tag-low">${r.overdue} vencida(s) em aberto</span></div>` : ''}</td>
+          <td class="hide-sm nowrap">${r.end_date ? fmtDate(r.end_date, false) : 'sem fim'}</td>
+          <td class="nowrap"><button class="btn-secondary btn-sm" data-edit-rec="${r.id}">Editar</button>
+            ${r.active ? `<button class="btn-danger btn-sm" data-stop-rec="${r.id}">Encerrar</button>` : ''}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhuma conta recorrente. Use “+ Nova conta recorrente” ou marque “Repetir” ao lançar.</td></tr>'}</tbody>
+    </table></div></div>`;
+  $$('[data-edit-rec]').forEach((b) => b.addEventListener('click', () => openRecurrenceForm(recurrences.find((r) => r.id === Number(b.dataset.editRec)))));
+  $$('[data-stop-rec]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    const r = recurrences.find((x) => x.id === Number(b.dataset.stopRec));
+    if (!confirm(`Encerrar "${r.description}"?\n\nO sistema para de lançar as próximas e apaga as parcelas futuras ainda em aberto. O que já foi pago ou já venceu continua.`)) return;
+    const { removed } = await api(`/api/admin/financeiro/recorrentes/${r.id}/encerrar`, { method: 'POST', body: {} });
+    toast(`Conta encerrada${removed ? ` · ${removed} parcela(s) futura(s) removida(s)` : ''}.`, 'ok');
+    renderRecurrences();
+  })));
+}
+
+function openRecurrenceForm(r) {
+  const accounts = F.opts.accounts.filter((a) => a.active || (r && a.id === r.account_id));
+  const kind = r ? r.kind : 'despesa';
+  const v = r || { start_date: todayLocal(), interval_months: 1, competence_offset: 0 };
+  const accOptions = (k) => accounts.filter((a) => a.kind === k).map((a) => `<option value="${a.id}" ${r && a.id === r.account_id ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const m = openModal(`
+    <div class="modal-head"><h2>${r ? 'Editar conta recorrente' : 'Nova conta recorrente'}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-rec">
+      <div class="tabs"><button type="button" data-k="despesa" class="${kind === 'despesa' ? 'active' : ''}">Despesa (a pagar)</button>
+        <button type="button" data-k="receita" class="${kind === 'receita' ? 'active' : ''}">Receita (a receber)</button></div>
+      <div class="form-grid">
+        <div class="field"><label>Conta *</label><select name="account_id" id="rec-account">${accOptions(kind)}</select></div>
+        <div class="field"><label>Valor de cada parcela (R$) *</label><input name="amount" inputmode="decimal" required value="${r ? centsToInput(r.amount_cents) : ''}"></div>
+        <div class="field"><label>Descrição</label><input name="description" value="${esc(v.description || '')}" placeholder="Ex.: aluguel da câmara"></div>
+        <div class="field"><label>Favorecido / cliente</label><input name="counterparty" value="${esc(v.counterparty || '')}"></div>
+        <div class="field"><label>1º vencimento * (o dia se repete)</label><input type="date" name="start_date" required value="${esc(v.start_date)}"></div>
+        <div class="field"><label>Repete</label><select name="interval_months">${Object.entries(F.opts.intervals).map(([k, l]) => `<option value="${k}" ${Number(k) === v.interval_months ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+        <div class="field"><label>Competência (mês do resultado)</label><select name="competence_offset">
+          <option value="0" ${v.competence_offset === 0 ? 'selected' : ''}>Mesmo mês do vencimento</option>
+          <option value="-1" ${v.competence_offset === -1 ? 'selected' : ''}>Mês anterior (ex.: salário pago no dia 5)</option></select></div>
+        <div class="field"><label>Termina em (vazio = sem fim)</label><input type="date" name="end_date" value="${esc(v.end_date || '')}"></div>
+        <div class="field"><label>Loja / local (opcional)</label><select name="location_id"><option value="">—</option>
+          ${F.opts.locations.map((l) => `<option value="${l.id}" ${v.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Documento</label><input name="document" value="${esc(v.document || '')}" placeholder="Contrato, boleto…"></div>
+      </div>
+      <div class="field"><label>Observação</label><input name="note" value="${esc(v.note || '')}"></div>
+      ${r ? '<p class="small muted">Salvar refaz as parcelas de hoje em diante que ainda estão em aberto. O que já foi pago ou já venceu não muda.</p>' : ''}
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`, { wide: true });
+  $$('[data-k]', m).forEach((b) => b.addEventListener('click', () => {
+    $$('[data-k]', m).forEach((x) => x.classList.toggle('active', x === b));
+    $('#rec-account', m).innerHTML = accOptions(b.dataset.k);
+  }));
+  const form = $('#form-rec', m);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitWith(form, async (data) => {
+      if (r) await api(`/api/admin/financeiro/recorrentes/${r.id}`, { method: 'PUT', body: data });
+      else await api('/api/admin/financeiro/recorrentes', { method: 'POST', body: data });
+      toast('Conta recorrente salva. As parcelas já estão em Lançamentos.', 'ok');
+      closeModal();
+      F.tab = 'recorrentes';
+      renderFinance();
+    });
+  });
 }
 
 function openEntryForm(e) {
@@ -1721,6 +1811,14 @@ function openEntryForm(e) {
         <div class="field"><label>Documento</label><input name="document" value="${esc(v.document || '')}" placeholder="NF, boleto…"></div>
       </div>
       <div class="field"><label>Observação</label><input name="note" value="${esc(v.note || '')}"></div>
+      ${e ? (e.recurrence_id ? '<p class="small muted">↻ Parcela de uma conta recorrente: as mudanças aqui valem só para esta parcela. Para mudar todas, use a aba “Contas recorrentes”.</p>' : '') : `
+      <div class="form-grid">
+        <div class="field"><label>Repetir</label><select name="interval_months" id="entry-repeat"><option value="">Não repete</option>
+          ${Object.entries(F.opts.intervals).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
+        <div class="field hidden" id="entry-times-wrap"><label>Quantas vezes (vazio = sem fim)</label><input name="times" type="number" min="1" max="600" placeholder="Ex.: 12"></div>
+      </div>
+      <p class="small muted hidden" id="entry-repeat-hint">O sistema lança sozinho as parcelas até o fim do mês seguinte e vai criando as próximas conforme os meses passam.
+        O dia do vencimento (ou da competência, se não houver vencimento) se repete.</p>`}
       <p class="small muted" id="entry-hint"></p>
       <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button>
         ${e ? '<span style="flex:1"></span><button type="button" class="btn-danger" id="btn-del-entry">Excluir</button>' : ''}</div>
@@ -1737,20 +1835,30 @@ function openEntryForm(e) {
   }));
   $('#entry-account', m).addEventListener('change', hint);
   hint();
+  const repeat = $('#entry-repeat', m);
+  if (repeat) repeat.addEventListener('change', () => {
+    $('#entry-times-wrap', m).classList.toggle('hidden', !repeat.value);
+    $('#entry-repeat-hint', m).classList.toggle('hidden', !repeat.value);
+  });
   const form = $('#form-entry', m);
   form.addEventListener('submit', (ev) => {
     ev.preventDefault();
     submitWith(form, async (data) => {
       if (e) await api(`/api/admin/financeiro/lancamentos/${e.id}`, { method: 'PUT', body: data });
-      else await api('/api/admin/financeiro/lancamentos', { method: 'POST', body: data });
-      toast('Lançamento salvo.', 'ok');
+      else if (data.interval_months) {
+        // vira uma conta recorrente: o 1º vencimento é a data base; a competência mantém a mesma distância em meses
+        const start = data.due_date || data.competence_date;
+        const offset = monthsBetween(start, data.competence_date || start);
+        await api('/api/admin/financeiro/recorrentes', { method: 'POST', body: { ...data, start_date: start, competence_offset: offset } });
+      } else await api('/api/admin/financeiro/lancamentos', { method: 'POST', body: data });
+      toast(data.interval_months && !e ? 'Conta recorrente criada. Ela aparece também na aba “Contas recorrentes”.' : 'Lançamento salvo.', 'ok');
       closeModal();
       renderEntries();
     });
   });
   const del = $('#btn-del-entry', m);
   if (del) del.addEventListener('click', () => guard(async () => {
-    if (!confirm('Excluir este lançamento?')) return;
+    if (!confirm(e.recurrence_id ? 'Excluir só esta parcela da conta recorrente? As outras continuam.' : 'Excluir este lançamento?')) return;
     await api(`/api/admin/financeiro/lancamentos/${e.id}`, { method: 'DELETE' });
     toast('Lançamento excluído.', 'ok');
     closeModal();

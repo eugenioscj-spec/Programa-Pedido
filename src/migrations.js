@@ -466,6 +466,36 @@ const MIGRATIONS = [
         WHERE sku IN ('OG26-ACAI-200-BANANA', 'OG26-ACAI-200-GUARANA') AND units_per_box = 4`).run();
     },
   },
+  {
+    version: 9,
+    name: 'Contas recorrentes no Financeiro',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fin_recurrences (
+          id                INTEGER PRIMARY KEY,
+          account_id        INTEGER NOT NULL REFERENCES fin_accounts(id),
+          description       TEXT NOT NULL,
+          amount_cents      INTEGER NOT NULL CHECK (amount_cents > 0),
+          start_date        TEXT NOT NULL,              -- 1º vencimento; o dia dele é o dia de todo mês
+          interval_months   INTEGER NOT NULL DEFAULT 1, -- 1 mensal, 2, 3, 6, 12 anual
+          end_date          TEXT,                       -- NULL = sem fim
+          competence_offset INTEGER NOT NULL DEFAULT 0, -- -1 = competência no mês anterior ao vencimento
+          location_id       INTEGER REFERENCES locations(id),
+          counterparty      TEXT,
+          document          TEXT,
+          note              TEXT,
+          active            INTEGER NOT NULL DEFAULT 1,
+          generated_until   TEXT,                       -- último vencimento já lançado
+          created_by        TEXT,
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+      const cols = db.prepare('PRAGMA table_info(fin_entries)').all().map((c) => c.name);
+      if (!cols.includes('recurrence_id')) db.exec('ALTER TABLE fin_entries ADD COLUMN recurrence_id INTEGER REFERENCES fin_recurrences(id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_fin_recurrence ON fin_entries(recurrence_id, due_date)');
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

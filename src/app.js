@@ -13,6 +13,7 @@ const { exportReport } = require('./export');
 const { loadOggiCatalog, productTypeOf, parseAllowedLines, lineFilter } = require('./catalog');
 const { createFinance, DRE_GROUPS, DFC_ACTIVITIES } = require('./finance');
 const { createBank } = require('./bank');
+const { createRecurring, INTERVALS } = require('./recurring');
 const T = require('./time');
 const U = require('./util');
 
@@ -70,6 +71,7 @@ function createApp(db, { testMode = false } = {}) {
   const inv = createInventory(db);
   const reports = createReports(db);
   const bank = createBank(db);
+  const recurring = createRecurring(db);
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -814,6 +816,7 @@ function createApp(db, { testMode = false } = {}) {
     const fn = REPORTS[req.params.tipo];
     if (!fn) throw new BusinessError('Relatório não encontrado.', 404);
     const params = reportParams(req.query);
+    if (req.params.tipo === 'dre' || req.params.tipo === 'dfc') recurring.generate();
     const report = fn(params);
     const format = req.query.formato;
     if (format === 'xlsx' || format === 'csv') {
@@ -1013,6 +1016,7 @@ function createApp(db, { testMode = false } = {}) {
       dfc_activities: DFC_ACTIVITIES,
       locations: db.prepare("SELECT id, name FROM locations WHERE active = 1 ORDER BY kind, name").all(),
       cash_opening_cents: Number(getSettings(db).cash_opening_cents) || 0,
+      intervals: INTERVALS,
     });
   });
 
@@ -1074,6 +1078,7 @@ function createApp(db, { testMode = false } = {}) {
     };
   }
   admin.get('/financeiro/lancamentos', (req, res) => {
+    recurring.generate();
     const q = req.query;
     const field = q.campo === 'pagamento' ? 'e.paid_date' : q.campo === 'vencimento' ? 'e.due_date' : 'e.competence_date';
     const where = [];
@@ -1109,6 +1114,25 @@ function createApp(db, { testMode = false } = {}) {
       counterparty = @counterparty, document = @document, note = @note, updated_at = datetime('now') WHERE id = @id`).run({ ...e, id });
     res.json({ ok: true });
   });
+  // ---------- financeiro: contas recorrentes ----------
+  admin.get('/financeiro/recorrentes', (req, res) => {
+    recurring.generate();
+    res.json({ recurrences: recurring.list() });
+  });
+  admin.post('/financeiro/recorrentes', (req, res) => {
+    const b = req.body || {};
+    const paid = String(b.paid_date || '').trim();
+    if (paid && !T.isDate(paid)) throw new BusinessError('Data de pagamento inválida.');
+    res.status(201).json({ id: recurring.create(b, req.admin.name, { firstPaidDate: paid || null }) });
+  });
+  admin.put('/financeiro/recorrentes/:id', (req, res) => {
+    recurring.update(idParam(req), req.body || {});
+    res.json({ ok: true });
+  });
+  admin.post('/financeiro/recorrentes/:id/encerrar', (req, res) => {
+    res.json({ removed: recurring.stop(idParam(req)) });
+  });
+
   admin.post('/financeiro/lancamentos/:id/pagar', (req, res) => {
     const id = idParam(req);
     const d = String(req.body?.paid_date || T.localDate());
