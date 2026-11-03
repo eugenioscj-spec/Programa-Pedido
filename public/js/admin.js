@@ -1671,13 +1671,14 @@ async function renderFinance() {
 
 async function renderEntries() {
   const qs = new URLSearchParams({ from: F.from, to: F.to, campo: F.campo, status: F.status, kind: F.kind }).toString();
-  const { entries, open } = await api(`/api/admin/financeiro/lancamentos?${qs}`);
+  const { entries, open, open_all: openAll } = await api(`/api/admin/financeiro/lancamentos?${qs}`);
+  const allNote = (k) => ((openAll[k] || 0) !== (open[k] || 0) ? `<div class="small muted">total em aberto, todos os meses: ${money(openAll[k] || 0)}</div>` : '');
   const sign = (e) => (e.kind === 'receita' ? 1 : -1);
   const net = entries.reduce((s, e) => s + sign(e) * e.amount_cents, 0);
   $('#fin-body').innerHTML = `
     <div class="grid grid-4" style="margin-bottom:16px">
-      <div class="card stat"><div class="label">A receber (em aberto)</div><div class="value qty-pos">${money(open.receita || 0)}</div></div>
-      <div class="card stat"><div class="label">A pagar (em aberto)</div><div class="value qty-neg">${money(open.despesa || 0)}</div></div>
+      <div class="card stat"><div class="label">A receber em aberto no período</div><div class="value qty-pos">${money(open.receita || 0)}</div>${allNote('receita')}</div>
+      <div class="card stat"><div class="label">A pagar em aberto no período</div><div class="value qty-neg">${money(open.despesa || 0)}</div>${allNote('despesa')}</div>
       <div class="card stat"><div class="label">Saldo dos lançamentos listados</div><div class="value">${money(net)}</div><div class="small muted">${entries.length} lançamento(s)</div></div>
     </div>
     <div class="card" style="padding:0"><div class="table-wrap"><table>

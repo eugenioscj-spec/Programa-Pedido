@@ -1094,9 +1094,15 @@ function createApp(db, { testMode = false } = {}) {
       FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id LEFT JOIN locations l ON l.id = e.location_id
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${field} DESC, e.id DESC LIMIT 1000`).all(...params);
-    const open = db.prepare(`SELECT a.kind, COALESCE(SUM(e.amount_cents), 0) v FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id
-      WHERE e.paid_date IS NULL GROUP BY a.kind`).all();
-    res.json({ entries, open: Object.fromEntries(open.map((r) => [r.kind, r.v])) });
+    // Em aberto: no período escolhido (mesmo campo de data) e no total, incluindo as parcelas dos meses seguintes.
+    const periodWhere = [];
+    const periodParams = [];
+    if (T.isDate(String(q.from || ''))) { periodWhere.push(`${field} >= ?`); periodParams.push(String(q.from)); }
+    if (T.isDate(String(q.to || ''))) { periodWhere.push(`${field} <= ?`); periodParams.push(String(q.to)); }
+    const openSum = (extra, params) => Object.fromEntries(db.prepare(`SELECT a.kind, COALESCE(SUM(e.amount_cents), 0) v
+      FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id
+      WHERE e.paid_date IS NULL ${extra.map((w) => `AND ${w}`).join(' ')} GROUP BY a.kind`).all(...params).map((r) => [r.kind, r.v]));
+    res.json({ entries, open: openSum(periodWhere, periodParams), open_all: openSum([], []) });
   });
   admin.post('/financeiro/lancamentos', (req, res) => {
     const e = readEntry(req.body || {});
