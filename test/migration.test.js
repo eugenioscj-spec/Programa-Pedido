@@ -144,8 +144,8 @@ test('migração 6: apaga movimentações, pedidos e financeiro; fica só o clie
   assert.ok(before > 0 && old.prepare('SELECT COUNT(*) n FROM orders').get().n > 0);
   old.close();
 
-  const db = openDatabase(file, { log: () => {} });
-  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, String(LATEST_VERSION));
+  const db = openDatabase(file, { log: () => {}, upTo: 6 });
+  assert.equal(db.prepare("SELECT value FROM settings WHERE key = 'schema_version'").get().value, '6');
   const count = (t) => db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n;
   for (const t of ['stock_movements', 'orders', 'order_items', 'fin_entries', 'bank_accounts', 'bank_imports', 'bank_transactions', 'bank_rules']) {
     assert.equal(count(t), 0, `${t} vazia`);

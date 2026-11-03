@@ -206,7 +206,7 @@ function createFinance(db, reports, { bankOpening = () => 0 } = {}) {
       title: 'DFC — fluxo de caixa (método direto)',
       subtitle: `${from} a ${to}. Regime de caixa: só lançamentos com data de pagamento/recebimento.`,
       warnings: [
-        'Recebimentos de clientes B2B e pagamentos de notas de mercadoria entram aqui só quando lançados em Financeiro. Contas a receber automáticas dos pedidos ficam para a Fase 2.',
+        'Os pedidos B2B entregues viram contas a receber e entram aqui quando marcados como recebidos. Pagamentos de notas de mercadoria entram quando lançados em Financeiro.',
         ...(banks ? [`O saldo inicial inclui ${(banks / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} dos bancos, calculado pelos extratos importados.`] : []),
         ...(pendingBank(from, to) ? [`${pendingBank(from, to)} movimento(s) dos extratos ainda não conciliado(s) no período: entram no caixa só depois de conciliados.`] : []),
       ],

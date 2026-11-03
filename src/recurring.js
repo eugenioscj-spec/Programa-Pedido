@@ -149,7 +149,22 @@ function createRecurring(db) {
       .map((r) => ({ ...r, interval_label: INTERVALS[r.interval_months] }));
   }
 
-  return { generate, create, update, stop, list, get: (id) => q.get.get(id) };
+  // Parcelas que ainda não foram lançadas (depois do que já foi gerado), até `until`. Só para projeção:
+  // não cria nada.
+  function projected(until) {
+    const out = [];
+    const rows = db.prepare(`SELECT r.*, a.kind, a.name AS account_name FROM fin_recurrences r
+      JOIN fin_accounts a ON a.id = r.account_id WHERE r.active = 1`).all();
+    for (const r of rows) {
+      for (const due of dueDates(r, until)) {
+        if (r.generated_until && due <= r.generated_until) continue;
+        out.push({ date: due, amount_cents: r.amount_cents, kind: r.kind, description: r.description, account_name: r.account_name, recurrence_id: r.id });
+      }
+    }
+    return out;
+  }
+
+  return { generate, create, update, stop, list, projected, get: (id) => q.get.get(id) };
 }
 
 module.exports = { createRecurring, addMonths, monthDiff, horizon, INTERVALS };

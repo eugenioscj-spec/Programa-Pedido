@@ -63,7 +63,7 @@ async function guard(fn) {
   }
 }
 
-const STORE_VIEWS = ['loja-estoque', 'loja-repor'];
+const STORE_VIEWS = ['loja-estoque', 'loja-repor', 'loja-cofre'];
 const isMaster = () => A.admin && A.admin.role === 'master';
 
 function setView(view) {
@@ -82,6 +82,7 @@ function setView(view) {
     financeiro: renderFinance,
     'loja-estoque': renderStoreStock,
     'loja-repor': renderRestock,
+    'loja-cofre': renderVault,
     produtos: renderProducts,
     clientes: renderCustomers,
     config: renderConfig,
@@ -1167,6 +1168,10 @@ async function openCustomerForm(c) {
       </div>
       <div class="field"><label>Endereço</label><input name="endereco" value="${esc(v.endereco || '')}"></div>
       <div class="field"><label>Observações internas</label><input name="notes" value="${esc(v.notes || '')}"></div>
+      <div class="field"><label>Prazo de pagamento (conta a receber quando o pedido é entregue)</label><select name="payment_days">
+        <option value="" ${v.payment_days === null || v.payment_days === undefined ? 'selected' : ''}>Padrão da configuração</option>
+        ${[0, 7, 14, 21, 28, 30, 45, 60].map((d) => `<option value="${d}" ${v.payment_days === d ? 'selected' : ''}>${d ? `${d} dias + 1 dia útil` : 'À vista'}</option>`).join('')}
+        <option value="-1" ${v.payment_days === -1 ? 'selected' : ''}>Não gerar conta a receber (loja própria)</option></select></div>
       <div class="field"><label>Linhas que o cliente pode ver e pedir</label>
         <div class="small muted" style="margin-bottom:6px">Desmarque o que ele não compra. Tipo inteiro marcado inclui as linhas novas que forem cadastradas.</div>
         <div class="row" style="margin-bottom:6px"><button type="button" class="btn-secondary btn-sm" id="lines-all">Marcar tudo</button><button type="button" class="btn-secondary btn-sm" id="lines-none">Desmarcar tudo</button></div>
@@ -1229,6 +1234,7 @@ async function renderConfig() {
           <h2 style="margin-top:8px">Estoque</h2>
           <div class="field"><label>Observação obrigatória em saída manual acima de (R$, 0 = nunca)</label><input name="out_note_threshold" inputmode="decimal" value="${centsToInput(s.out_note_threshold_cents)}"></div>
           <div class="field"><label>Fornecedor padrão na entrada</label><input name="default_supplier" value="${esc(s.default_supplier || '')}"></div>
+          <div class="field"><label>Prazo padrão de recebimento B2B (dias; + 1 dia útil para cair)</label><input name="b2b_payment_days" type="number" min="0" max="365" value="${esc(s.b2b_payment_days ?? '30')}"></div>
           <button type="submit">Salvar</button>
         </form>
         <div class="card">
@@ -1514,6 +1520,42 @@ async function renderStoreStock() {
   $('#btn-go-restock').addEventListener('click', () => setView('loja-repor'));
 }
 
+async function renderVault() {
+  const { cash_account: cash, vault, transfers } = await api('/api/admin/loja/cofre');
+  if (!cash || !vault) {
+    app.innerHTML = '<div class="alert alert-warn">O caixa desta loja ou o cofre não está cadastrado. Fale com o master.</div>';
+    return;
+  }
+  app.innerHTML = `
+    <div class="section-head"><h1>Enviar ao cofre</h1></div>
+    <div class="card" style="max-width:520px">
+      <p class="muted" style="margin-top:0">Registre o dinheiro que saiu do <strong>${esc(cash.name)}</strong> e foi guardado no <strong>${esc(vault.name)}</strong>.</p>
+      <form id="form-vault">
+        <div class="form-grid">
+          <div class="field"><label>Valor (R$) *</label><input name="amount" inputmode="decimal" required autofocus></div>
+          <div class="field"><label>Data</label><input type="date" name="date" value="${todayLocal()}"></div>
+        </div>
+        <div class="field"><label>Observação</label><input name="note" placeholder="Ex.: fechamento do caixa da tarde"></div>
+        <button type="submit" class="btn-ok">Registrar envio</button>
+      </form>
+    </div>
+    <div class="card"><h2>Últimos envios</h2><div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th class="num">Valor</th><th>Por</th><th class="hide-sm">Observação</th></tr></thead>
+      <tbody>${transfers.map((t) => `<tr><td class="nowrap">${fmtDate(t.date, false)}</td><td class="num">${money(t.amount_cents)}</td>
+        <td class="small">${esc(t.created_by || '')}</td><td class="hide-sm small">${esc(t.note || '')}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="empty">Nenhum envio ainda.</td></tr>'}</tbody></table></div></div>`;
+  const form = $('#form-vault');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitWith(form, async (data) => {
+      if (!confirm(`Confirmar envio de R$ ${data.amount} ao cofre?`)) return;
+      await api('/api/admin/loja/cofre', { method: 'POST', body: data });
+      toast('Envio ao cofre registrado.', 'ok');
+      renderVault();
+    });
+  });
+}
+
 let restockLines = [];
 async function renderRestock() {
   const [{ products, location: loc }, { movements }] = await Promise.all([api('/api/admin/loja/estoque'), api('/api/admin/loja/reposicoes')]);
@@ -1611,13 +1653,14 @@ const F = { tab: 'lancamentos', from: null, to: null, campo: 'competencia', stat
 async function renderFinance() {
   if (!F.from) [F.from, F.to] = monthRange(0, true);
   F.opts = await api('/api/admin/financeiro/opcoes');
-  const tabs = { lancamentos: 'Lançamentos', recorrentes: 'Contas recorrentes', bancos: 'Bancos e conciliação', dre: 'DRE', dfc: 'DFC (caixa)', extratos: 'Extratos por banco', contas: 'Plano de contas' };
+  const tabs = { lancamentos: 'Lançamentos', recorrentes: 'Contas recorrentes', saldos: 'Saldos e contas', fluxo: 'Fluxo futuro', bancos: 'Bancos e conciliação', dre: 'DRE', dfc: 'DFC (caixa)', extratos: 'Extratos por banco', contas: 'Plano de contas' };
   app.innerHTML = `
     <div class="section-head"><h1>Financeiro</h1><span class="spacer"></span>
       ${F.tab === 'lancamentos' ? '<button id="btn-new-entry">+ Novo lançamento</button>' : ''}
-      ${F.tab === 'recorrentes' ? '<button id="btn-new-rec">+ Nova conta recorrente</button>' : ''}</div>
+      ${F.tab === 'recorrentes' ? '<button id="btn-new-rec">+ Nova conta recorrente</button>' : ''}
+      ${F.tab === 'saldos' ? '<button class="btn-secondary" id="btn-new-bankacc">+ Nova conta</button><button id="btn-new-transfer">Transferir entre contas</button>' : ''}</div>
     <div class="chips">${Object.entries(tabs).map(([k, v]) => `<button class="chip ${k === F.tab ? 'active' : ''}" data-ft="${k}">${v}</button>`).join('')}</div>
-    ${!['contas', 'bancos', 'recorrentes'].includes(F.tab) ? `
+    ${!['contas', 'bancos', 'recorrentes', 'saldos', 'fluxo'].includes(F.tab) ? `
     <form class="card" id="fin-filter"><div class="row">
       ${F.tab === 'lancamentos' ? `<div class="field"><label>Período por</label><select id="f-campo">
         <option value="competencia" ${F.campo === 'competencia' ? 'selected' : ''}>Competência</option>
@@ -1660,6 +1703,8 @@ async function renderFinance() {
   if (nr) nr.addEventListener('click', () => openRecurrenceForm(null));
   if (F.tab === 'lancamentos') return renderEntries();
   if (F.tab === 'recorrentes') return renderRecurrences();
+  if (F.tab === 'saldos') return renderBalances();
+  if (F.tab === 'fluxo') return renderCashflow();
   if (F.tab === 'contas') return renderAccounts();
   if (F.tab === 'bancos') return renderBanks();
   const { report } = await api(`/api/admin/relatorios/${F.tab === 'extratos' ? 'bancos' : F.tab}?from=${F.from}&to=${F.to}`);
@@ -1691,16 +1736,12 @@ async function renderEntries() {
           <td>${esc(e.description)}${e.recurrence_id ? ' <span class="tag tag-confirmado" title="Conta recorrente">↻ recorrente</span>' : ''}${e.counterparty ? `<div class="small muted">${esc(e.counterparty)}</div>` : ''}</td>
           <td class="num nowrap ${e.kind === 'receita' ? 'qty-pos' : 'qty-neg'}">${e.kind === 'receita' ? '' : '−'}${money(e.amount_cents)}</td>
           <td class="hide-sm nowrap">${e.due_date ? fmtDate(e.due_date, false) : '—'}</td>
-          <td>${e.paid_date ? `<span class="tag tag-entregue">${e.kind === 'receita' ? 'recebido' : 'pago'} ${fmtDate(e.paid_date, false)}</span>`
-            : `<button class="btn-ok btn-sm" data-pay="${e.id}">${e.kind === 'receita' ? 'Recebido hoje' : 'Pago hoje'}</button>`}</td>
+          <td>${e.paid_date ? `<span class="tag tag-entregue">${e.kind === 'receita' ? 'recebido' : 'pago'} ${fmtDate(e.paid_date, false)}</span>${e.bank_account_name ? `<div class="small muted">${esc(e.bank_account_name)}</div>` : ''}`
+            : `<button class="btn-ok btn-sm" data-pay="${e.id}">${e.kind === 'receita' ? 'Receber' : 'Pagar'}</button>`}</td>
           <td class="nowrap"><button class="btn-secondary btn-sm" data-edit-entry="${e.id}">Editar</button></td>
         </tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhum lançamento no período. Use “+ Novo lançamento”.</td></tr>'}</tbody>
     </table></div></div>`;
-  $$('[data-pay]').forEach((b) => b.addEventListener('click', () => guard(async () => {
-    await api(`/api/admin/financeiro/lancamentos/${b.dataset.pay}/pagar`, { method: 'POST', body: {} });
-    toast('Baixa registrada.', 'ok');
-    renderEntries();
-  })));
+  $$('[data-pay]').forEach((b) => b.addEventListener('click', () => openPayForm(entries.find((e) => e.id === Number(b.dataset.pay)))));
   $$('[data-edit-entry]').forEach((b) => b.addEventListener('click', () => openEntryForm(entries.find((e) => e.id === Number(b.dataset.editEntry)))));
 }
 
@@ -1789,6 +1830,246 @@ function openRecurrenceForm(r) {
   });
 }
 
+// Opções de conta / caixa onde o dinheiro entrou ou saiu.
+const bankAccountOptions = (selected) => `<option value="">— não informar —</option>${F.opts.bank_accounts
+  .map((a) => `<option value="${a.id}" ${Number(selected) === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}`;
+const lastPayAccount = () => { try { return localStorage.getItem('oggi_pay_account') || ''; } catch { return ''; } };
+
+function openPayForm(e) {
+  const rec = e.kind === 'receita';
+  const m = openModal(`
+    <div class="modal-head"><h2>${rec ? 'Registrar recebimento' : 'Registrar pagamento'}</h2><button class="modal-close" data-close>×</button></div>
+    <p><strong>${esc(e.description)}</strong> · ${money(e.amount_cents)}${e.counterparty ? `<br><span class="small muted">${esc(e.counterparty)}</span>` : ''}</p>
+    <form id="form-pay">
+      <div class="form-grid">
+        <div class="field"><label>${rec ? 'Recebido em' : 'Pago em'}</label><input type="date" name="paid_date" required value="${todayLocal()}"></div>
+        <div class="field"><label>${rec ? 'Entrou em qual conta?' : 'Saiu de qual conta?'}</label><select name="bank_account_id">${bankAccountOptions(e.bank_account_id || lastPayAccount())}</select></div>
+      </div>
+      <div class="row"><button type="submit" class="btn-ok">Confirmar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const form = $('#form-pay', m);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitWith(form, async (data) => {
+      await api(`/api/admin/financeiro/lancamentos/${e.id}/pagar`, { method: 'POST', body: data });
+      try { localStorage.setItem('oggi_pay_account', data.bank_account_id); } catch { /* sem armazenamento */ }
+      toast('Baixa registrada.', 'ok');
+      closeModal();
+      renderEntries();
+    });
+  });
+}
+
+// ---------- saldos, contas e transferências ----------
+async function renderBalances() {
+  const [{ accounts, total_cents: total }, { transfers }] = await Promise.all([
+    api('/api/admin/financeiro/saldos'), api('/api/admin/financeiro/transferencias')]);
+  const shown = accounts.filter((a) => a.active && a.kind === 'corrente');
+  const card = (a) => `
+    <div class="card account-card ${a.in_total ? '' : 'muted-card'}">
+      <div class="row" style="align-items:flex-start"><div class="grow"><div class="small muted">${esc(a.type_label)}</div><strong>${esc(a.name)}</strong></div>
+        <button class="btn-link small" data-edit-bacc="${a.id}">Editar</button></div>
+      ${a.type === 'caixa'
+        ? `<div class="small muted" style="margin-top:6px">Não entra no total: as vendas do balcão ainda não vêm do PDV.</div>
+           <div class="small" style="margin-top:4px">Enviado ao cofre: <strong>${money(Math.max(0, -a.current_cents))}</strong></div>`
+        : `<div class="value ${a.current_cents < 0 ? 'qty-neg' : ''}" style="font-size:1.5rem;font-weight:700;margin-top:6px">${money(a.current_cents)}</div>
+           <div class="small muted">${a.statement ? `extrato até ${fmtDate(a.statement_date, false)}${a.after_statement_cents ? ` · ${money(a.after_statement_cents)} lançado depois` : ''}${a.ok ? '' : ' · <span class="qty-neg">extrato não fecha</span>'}`
+             : a.opening_date ? `saldo inicial ${money(a.opening_balance_cents || 0)} em ${fmtDate(a.opening_date, false)}` : '<span class="qty-neg">informe o saldo inicial em Editar</span>'}</div>`}
+    </div>`;
+  $('#fin-body').innerHTML = `
+    <div class="card stat" style="margin-bottom:14px"><div class="label">Saldo total hoje (bancos + cofre)</div><div class="value ${total < 0 ? 'qty-neg' : ''}">${money(total)}</div>
+      <div class="small muted">Banco com extrato OFX: saldo do último extrato + o que foi pago/recebido nele depois. Sem extrato: saldo inicial + movimentos desde então.</div></div>
+    <div class="grid grid-3 accounts-grid">${shown.map(card).join('') || '<div class="empty">Nenhuma conta.</div>'}</div>
+    <div class="card" style="padding:0;margin-top:14px"><div style="padding:14px 14px 0"><h2 style="margin:0">Transferências entre contas</h2>
+      <p class="small muted">Movem dinheiro entre contas sem virar receita nem despesa (ex.: caixa da loja → cofre → banco).</p></div>
+      <div class="table-wrap"><table><thead><tr><th>Data</th><th>De</th><th>Para</th><th class="num">Valor</th><th class="hide-sm">Por</th><th></th></tr></thead>
+      <tbody>${transfers.map((t) => `<tr><td class="nowrap">${fmtDate(t.date, false)}</td><td>${esc(t.from_name)}</td><td>${esc(t.to_name)}${t.note ? `<div class="small muted">${esc(t.note)}</div>` : ''}</td>
+        <td class="num nowrap">${money(t.amount_cents)}</td><td class="hide-sm small">${esc(t.created_by || '')}</td>
+        <td><button class="btn-danger btn-sm" data-del-transfer="${t.id}">Excluir</button></td></tr>`).join('')
+        || '<tr><td colspan="6" class="empty">Nenhuma transferência ainda.</td></tr>'}</tbody></table></div></div>`;
+  $$('[data-edit-bacc]').forEach((b) => b.addEventListener('click', () => openBankAccountForm(accounts.find((a) => a.id === Number(b.dataset.editBacc)))));
+  $$('[data-del-transfer]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    if (!confirm('Excluir esta transferência? Os saldos das duas contas voltam ao que eram.')) return;
+    await api(`/api/admin/financeiro/transferencias/${b.dataset.delTransfer}`, { method: 'DELETE' });
+    renderBalances();
+  })));
+  $('#btn-new-bankacc').addEventListener('click', () => openBankAccountForm(null));
+  $('#btn-new-transfer').addEventListener('click', () => openTransferForm(accounts.filter((a) => a.active && a.kind === 'corrente')));
+}
+
+const BANK_CHOICES = [['341', 'Itaú'], ['033', 'Santander'], ['237', 'Bradesco'], ['336', 'C6 Bank'], ['001', 'Banco do Brasil'], ['104', 'Caixa'], ['260', 'Nubank'], ['077', 'Inter'], ['748', 'Sicredi'], ['756', 'Sicoob']];
+function openBankAccountForm(a) {
+  const v = a || { type: 'banco' };
+  const m = openModal(`
+    <div class="modal-head"><h2>${a ? 'Editar conta' : 'Nova conta'}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-bacc">
+      <div class="form-grid">
+        ${a ? '' : `<div class="field"><label>Tipo</label><select name="type" id="bacc-type"><option value="banco">Banco</option><option value="cofre">Cofre</option></select></div>
+        <div class="field" id="bacc-bank"><label>Banco</label><select name="bank_code">${BANK_CHOICES.map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}</select></div>`}
+        <div class="field"><label>Nome *</label><input name="name" required value="${esc(v.name || '')}" placeholder="Ex.: Itaú PJ"></div>
+        ${v.type === 'banco' ? `<div class="field"><label>Agência</label><input name="branch" value="${esc(v.branch || '')}"></div>
+        <div class="field"><label>Conta (vazio = preenche no 1º OFX)</label><input name="account_number" value="${esc(v.account_number || '')}" ${a && a.statement ? 'disabled' : ''}></div>` : ''}
+        <div class="field"><label>Saldo inicial (R$)</label><input name="opening_balance" inputmode="decimal" value="${v.opening_balance_cents === null || v.opening_balance_cents === undefined ? '' : centsToInput(v.opening_balance_cents)}"></div>
+        <div class="field"><label>Saldo em (data)</label><input type="date" name="opening_date" value="${esc(v.opening_date || '')}"></div>
+        ${a ? `<div class="field"><label>Situação</label><select name="active"><option value="1" ${v.active ? 'selected' : ''}>Ativa</option><option value="0" ${v.active ? '' : 'selected'}>Desativada</option></select></div>` : ''}
+      </div>
+      <p class="small muted">${a && a.statement ? 'Esta conta tem extrato OFX: o saldo vem do banco e o saldo inicial informado aqui não é usado.'
+        : 'Saldo inicial: quanto havia na conta no começo do dia informado. A partir dele o sistema soma pagamentos, recebimentos e transferências.'}</p>
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const type = $('#bacc-type', m);
+  if (type) type.addEventListener('change', () => { $('#bacc-bank', m).classList.toggle('hidden', type.value !== 'banco'); });
+  const form = $('#form-bacc', m);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitWith(form, async (data) => {
+      if (data.active !== undefined) data.active = data.active === '1';
+      if (a) await api(`/api/admin/financeiro/contas-bancarias/${a.id}`, { method: 'PUT', body: data });
+      else await api('/api/admin/financeiro/contas-bancarias', { method: 'POST', body: data });
+      toast('Conta salva.', 'ok');
+      closeModal();
+      F.opts = await api('/api/admin/financeiro/opcoes');
+      renderBalances();
+    });
+  });
+}
+
+function openTransferForm(list) {
+  const opts = (sel) => list.map((a) => `<option value="${a.id}" ${a.type === sel ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const m = openModal(`
+    <div class="modal-head"><h2>Transferir entre contas</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-transfer">
+      <div class="form-grid">
+        <div class="field"><label>De</label><select name="from_account_id">${opts('cofre')}</select></div>
+        <div class="field"><label>Para</label><select name="to_account_id">${opts('banco')}</select></div>
+        <div class="field"><label>Valor (R$) *</label><input name="amount" inputmode="decimal" required></div>
+        <div class="field"><label>Data</label><input type="date" name="date" value="${todayLocal()}"></div>
+      </div>
+      <div class="field"><label>Observação</label><input name="note" placeholder="Ex.: depósito do cofre"></div>
+      <div class="row"><button type="submit">Transferir</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const form = $('#form-transfer', m);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    submitWith(form, async (data) => {
+      await api('/api/admin/financeiro/transferencias', { method: 'POST', body: data });
+      toast('Transferência registrada.', 'ok');
+      closeModal();
+      renderBalances();
+    });
+  });
+}
+
+// ---------- fluxo de caixa futuro ----------
+F.days = 90;
+async function renderCashflow() {
+  const p = await api(`/api/admin/financeiro/fluxo-futuro?dias=${F.days}`);
+  $('#fin-body').innerHTML = `
+    <div class="row" style="margin-bottom:12px">
+      <div class="chips" style="margin:0">${[30, 60, 90, 180].map((d) => `<button class="chip ${d === F.days ? 'active' : ''}" data-days="${d}">${d} dias</button>`).join('')}</div>
+      <span class="grow"></span>
+      <button class="btn-secondary btn-sm" data-fexp="xlsx">Excel</button><button class="btn-secondary btn-sm" data-fexp="csv">CSV</button>
+    </div>
+    ${p.first_negative ? `<div class="alert alert-error">⚠ <strong>O caixa fica negativo em ${fmtDate(p.first_negative.date, false)}</strong> (${money(p.first_negative.balance)}), se nada mudar.</div>` : ''}
+    <div class="grid grid-4" style="margin-bottom:14px">
+      <div class="card stat"><div class="label">Saldo hoje</div><div class="value">${money(p.start_cents)}</div><div class="small muted">bancos + cofre</div></div>
+      <div class="card stat"><div class="label">Entradas previstas</div><div class="value qty-pos">${money(p.total_in)}</div>${p.overdue_in ? `<div class="small muted">${money(p.overdue_in)} já vencido</div>` : ''}</div>
+      <div class="card stat"><div class="label">Saídas previstas</div><div class="value qty-neg">${money(p.total_out)}</div>${p.overdue_out ? `<div class="small muted">${money(p.overdue_out)} já vencido</div>` : ''}</div>
+      <div class="card stat"><div class="label">Saldo em ${fmtDate(p.until, false)}</div><div class="value ${p.end_cents < 0 ? 'qty-neg' : ''}">${money(p.end_cents)}</div>
+        <div class="small muted">menor saldo: ${money(p.min.balance)} em ${fmtDate(p.min.date, false)}</div></div>
+    </div>
+    <div class="card chart-card"><h2 style="margin:0 0 4px">Saldo projetado, dia a dia</h2>
+      <p class="small muted" style="margin:0 0 8px">Contas vencidas e não pagas entram hoje. Inclui as próximas parcelas das contas recorrentes. As vendas do balcão ainda não entram.</p>
+      <div id="cf-chart"></div></div>
+    <div class="card" style="padding:0;margin-top:14px"><div class="table-wrap"><table>
+      <thead><tr><th>Semana</th><th class="num">Saldo inicial</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo final</th></tr></thead>
+      <tbody>${p.weeks.map((w) => `<tr><td class="nowrap">${fmtDate(w.from, false)} a ${fmtDate(w.to, false)}</td><td class="num">${money(w.start)}</td>
+        <td class="num qty-pos">${w.in ? money(w.in) : '—'}</td><td class="num qty-neg">${w.out ? `−${money(w.out)}` : '—'}</td>
+        <td class="num ${w.end < 0 ? 'qty-neg' : ''}"><strong>${money(w.end)}</strong></td></tr>`).join('')}</tbody></table></div></div>
+    <div class="card" style="padding:0;margin-top:14px"><div style="padding:14px 14px 0"><h2 style="margin:0">Contas previstas</h2></div><div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Descrição</th><th class="hide-sm">Conta</th><th class="num">Valor</th></tr></thead>
+      <tbody>${p.events.map((e) => `<tr><td class="nowrap">${fmtDate(e.date, false)}</td>
+        <td>${esc(e.description)}${e.counterparty ? `<div class="small muted">${esc(e.counterparty)}</div>` : ''}
+          ${e.overdue ? ' <span class="tag tag-low">vencida</span>' : ''}${e.projected ? ' <span class="tag tag-confirmado">↻ a lançar</span>' : ''}</td>
+        <td class="hide-sm small">${esc(e.account_name)}</td>
+        <td class="num nowrap ${e.kind === 'receita' ? 'qty-pos' : 'qty-neg'}">${e.kind === 'receita' ? '' : '−'}${money(e.amount_cents)}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="empty">Nada previsto no período.</td></tr>'}</tbody></table></div></div>`;
+  drawBalanceChart($('#cf-chart'), p);
+  $$('[data-days]').forEach((b) => b.addEventListener('click', () => { F.days = Number(b.dataset.days); guard(renderCashflow); }));
+  $$('[data-fexp]', $('#fin-body')).forEach((b) => b.addEventListener('click', () => downloadUrl(`/api/admin/relatorios/fluxo?dias=${F.days}&formato=${b.dataset.fexp}`)));
+}
+
+// Linha do saldo projetado (SVG): grade discreta, linha do zero, ponto mais baixo marcado e cruz + dica ao passar o mouse.
+function drawBalanceChart(el, p) {
+  const W = Math.max(320, el.clientWidth || 800);
+  const H = 280;
+  const pad = { l: 72, r: 16, t: 16, b: 28 };
+  const s = p.series;
+  const vals = s.map((x) => x.balance);
+  let lo = Math.min(0, ...vals);
+  let hi = Math.max(0, ...vals);
+  if (lo === hi) hi = lo + 100;
+  const span = hi - lo;
+  lo -= span * 0.06; hi += span * 0.06;
+  const x = (i) => pad.l + (i / Math.max(1, s.length - 1)) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  // passos "redondos" no eixo de valores
+  const raw = (hi - lo) / 5;
+  const mag = 10 ** Math.floor(Math.log10(Math.abs(raw) || 1));
+  const step = [1, 2, 2.5, 5, 10].map((k) => k * mag).find((k) => k >= raw) || raw;
+  const ticks = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) ticks.push(v);
+  const short = (c) => (Math.abs(c) >= 100000000 ? `${(c / 100000000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`
+    : Math.abs(c) >= 100000 ? `${(c / 100000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil` : (c / 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 }));
+  const months = s.map((d, i) => [d, i]).filter(([d], i) => i === 0 || d.date.slice(8) === '01');
+  // em degraus: o saldo muda de um dia para o outro, não aos poucos
+  const path = s.map((d, i) => (i ? `L${x(i).toFixed(1)},${y(s[i - 1].balance).toFixed(1)}L${x(i).toFixed(1)},${y(d.balance).toFixed(1)}`
+    : `M${x(0).toFixed(1)},${y(d.balance).toFixed(1)}`)).join('');
+  const minI = s.findIndex((d) => d.date === p.min.date);
+  const neg = lo < 0 ? `<rect x="${pad.l}" y="${y(0)}" width="${W - pad.l - pad.r}" height="${Math.max(0, y(lo) - y(0))}" fill="var(--danger-soft)" opacity=".55"/>` : '';
+  el.innerHTML = `
+    <div class="chart-wrap" style="position:relative">
+      <svg width="${W}" height="${H}" role="img" aria-label="Saldo projetado de ${money(p.start_cents)} hoje até ${money(p.end_cents)} em ${fmtDate(p.until, false)}">
+        ${neg}
+        ${ticks.map((v) => `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/>
+          <text x="${pad.l - 8}" y="${y(v) + 4}" text-anchor="end" class="chart-axis">${short(v)}</text>`).join('')}
+        <line x1="${pad.l}" x2="${W - pad.r}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1"/>
+        ${months.map(([d, i]) => `<text x="${x(i)}" y="${H - 8}" text-anchor="${i === 0 ? 'start' : 'middle'}" class="chart-axis">${i === 0 ? 'hoje' : `${d.date.slice(5, 7)}/${d.date.slice(2, 4)}`}</text>`).join('')}
+        <path d="${path}" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${x(minI)}" cy="${y(p.min.balance)}" r="5" fill="var(--brand)" stroke="#fff" stroke-width="2"/>
+        <text x="${Math.min(Math.max(x(minI), pad.l + 60), W - pad.r - 60)}" y="${y(p.min.balance) + (y(p.min.balance) > H - 60 ? -12 : 20)}" text-anchor="middle" class="chart-label">menor: ${money(p.min.balance)}</text>
+        <line id="cf-cross" x1="0" x2="0" y1="${pad.t}" y2="${H - pad.b}" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>
+        <circle id="cf-dot" r="5" fill="var(--brand)" stroke="#fff" stroke-width="2" visibility="hidden"/>
+        <rect x="${pad.l}" y="${pad.t}" width="${W - pad.l - pad.r}" height="${H - pad.t - pad.b}" fill="transparent" id="cf-hit"/>
+      </svg>
+      <div class="chart-tip hidden" id="cf-tip"></div>
+    </div>`;
+  const hit = $('#cf-hit', el);
+  const tip = $('#cf-tip', el);
+  const show = (clientX) => {
+    const r = hit.getBoundingClientRect();
+    const i = Math.max(0, Math.min(s.length - 1, Math.round(((clientX - r.left) / r.width) * (s.length - 1))));
+    const d = s[i];
+    $('#cf-cross', el).setAttribute('x1', x(i)); $('#cf-cross', el).setAttribute('x2', x(i));
+    $('#cf-cross', el).setAttribute('visibility', 'visible');
+    $('#cf-dot', el).setAttribute('cx', x(i)); $('#cf-dot', el).setAttribute('cy', y(d.balance));
+    $('#cf-dot', el).setAttribute('visibility', 'visible');
+    tip.innerHTML = `<strong>${fmtDate(d.date, false)}</strong><div>Saldo: <strong>${money(d.balance)}</strong></div>
+      ${d.in ? `<div class="qty-pos">+ ${money(d.in)}</div>` : ''}${d.out ? `<div class="qty-neg">− ${money(d.out)}</div>` : ''}`;
+    tip.classList.remove('hidden');
+    tip.style.left = `${Math.min(x(i) + 12, W - 170)}px`;
+    tip.style.top = `${Math.max(0, y(d.balance) - 70)}px`;
+  };
+  hit.addEventListener('mousemove', (e) => show(e.clientX));
+  hit.addEventListener('touchstart', (e) => show(e.touches[0].clientX), { passive: true });
+  hit.addEventListener('touchmove', (e) => show(e.touches[0].clientX), { passive: true });
+  hit.addEventListener('mouseleave', () => {
+    tip.classList.add('hidden');
+    $('#cf-cross', el).setAttribute('visibility', 'hidden');
+    $('#cf-dot', el).setAttribute('visibility', 'hidden');
+  });
+}
+
 function openEntryForm(e) {
   const accounts = F.opts.accounts.filter((a) => a.active || (e && a.id === e.account_id));
   const v = e || { kind: 'despesa', competence_date: todayLocal() };
@@ -1807,6 +2088,7 @@ function openEntryForm(e) {
         <div class="field"><label>Competência * (mês do resultado)</label><input type="date" name="competence_date" required value="${esc(v.competence_date || '')}"></div>
         <div class="field"><label>Vencimento</label><input type="date" name="due_date" value="${esc(v.due_date || '')}"></div>
         <div class="field"><label>Pago / recebido em (vazio = em aberto)</label><input type="date" name="paid_date" value="${esc(v.paid_date || '')}"></div>
+        <div class="field"><label>Conta / caixa do pagamento</label><select name="bank_account_id">${bankAccountOptions(v.bank_account_id || '')}</select></div>
         <div class="field"><label>Loja / local (opcional)</label><select name="location_id"><option value="">—</option>
           ${F.opts.locations.map((l) => `<option value="${l.id}" ${v.location_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Documento</label><input name="document" value="${esc(v.document || '')}" placeholder="NF, boleto…"></div>

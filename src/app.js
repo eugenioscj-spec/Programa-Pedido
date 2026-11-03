@@ -14,6 +14,9 @@ const { loadOggiCatalog, productTypeOf, parseAllowedLines, lineFilter } = requir
 const { createFinance, DRE_GROUPS, DFC_ACTIVITIES } = require('./finance');
 const { createBank } = require('./bank');
 const { createRecurring, INTERVALS } = require('./recurring');
+const { createAccounts } = require('./accounts');
+const { createReceivables } = require('./receivables');
+const { createCashflow } = require('./cashflow');
 const T = require('./time');
 const U = require('./util');
 
@@ -72,6 +75,9 @@ function createApp(db, { testMode = false } = {}) {
   const reports = createReports(db);
   const bank = createBank(db);
   const recurring = createRecurring(db);
+  const accounts = createAccounts(db, bank);
+  const receivables = createReceivables(db);
+  const cashflow = createCashflow(db, accounts, recurring);
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -370,6 +376,23 @@ function createApp(db, { testMode = false } = {}) {
       WHERE m.type = 'transferencia' AND (? IS NULL OR m.location_id = ?)
       ORDER BY m.id DESC LIMIT 200`).all(req.admin.role === 'loja' ? req.admin.location_id : null, req.admin.role === 'loja' ? req.admin.location_id : null);
     res.json({ movements: rows });
+  });
+
+  // Envio do excedente do caixa da loja para o cofre (sangria). O usuário da loja só envia do caixa dele.
+  const storeLocation = (req) => (req.admin.role === 'loja' ? req.admin.location_id : Number(req.body?.location_id || req.query.location_id) || null);
+  admin.get('/loja/cofre', (req, res) => {
+    const loc = storeLocation(req);
+    const cash = loc && accounts.cashOf(loc);
+    res.json({ cash_account: cash || null, vault: accounts.vault() || null,
+      transfers: cash ? accounts.transfers({ accountId: cash.id, limit: 50 }) : [] });
+  });
+  admin.post('/loja/cofre', (req, res) => {
+    const loc = storeLocation(req);
+    const cash = loc && accounts.cashOf(loc);
+    const vault = accounts.vault();
+    if (!cash || !vault) throw new BusinessError('Caixa da loja ou cofre não encontrado. Fale com o master.');
+    const id = accounts.transfer({ from: cash.id, to: vault.id, amount: req.body?.amount, date: req.body?.date, note: req.body?.note, user: req.admin.name });
+    res.status(201).json({ id });
   });
 
   // ---------- daqui para baixo: só master ----------
@@ -802,6 +825,7 @@ function createApp(db, { testMode = false } = {}) {
     dre: (q) => finance.dre(q.from, q.to),
     dfc: (q) => finance.dfc(q.from, q.to),
     bancos: (q) => bank.report(q.from, q.to),
+    fluxo: (q) => cashflow.report(q.days),
   };
   function reportParams(qs) {
     const today = T.localDate();
@@ -810,7 +834,8 @@ function createApp(db, { testMode = false } = {}) {
     const from = T.isDate(String(qs.from || '')) ? String(qs.from) : mFrom;
     const to = T.isDate(String(qs.to || '')) ? String(qs.to) : today;
     if (from > to) throw new BusinessError('A data inicial é depois da final.');
-    return { date, from, to };
+    const days = [30, 60, 90, 180].includes(Number(qs.dias)) ? Number(qs.dias) : 90;
+    return { date, from, to, days };
   }
   admin.get('/relatorios/:tipo', async (req, res) => {
     const fn = REPORTS[req.params.tipo];
@@ -848,6 +873,7 @@ function createApp(db, { testMode = false } = {}) {
   admin.post('/pedidos/:id/status', (req, res) => {
     const id = idParam(req);
     inv.changeStatus({ orderId: id, status: req.body?.status, user: req.admin.name, adminNotes: req.body?.admin_notes });
+    if (req.body?.status === 'entregue') receivables.onDelivered(id);
     res.json({ order: loadOrder(id) });
   });
 
@@ -858,6 +884,13 @@ function createApp(db, { testMode = false } = {}) {
   });
 
   // ---------- admin: clientes ----------
+  // Prazo de recebimento: vazio = padrão da Config.; -1 = não gera conta a receber (loja própria).
+  function readPaymentDays(v) {
+    if (v === undefined || v === null || String(v).trim() === '') return null;
+    const days = Number(v);
+    if (!Number.isInteger(days) || days < -1 || days > 365) throw new BusinessError('Prazo de recebimento inválido.');
+    return days;
+  }
   // null = todas as linhas; lista = só as escolhidas ("Tipo" ou "Tipo|Linha").
   function readAllowedLines(value) {
     if (value === null || value === undefined) return null;
@@ -884,11 +917,11 @@ function createApp(db, { testMode = false } = {}) {
     if (!b.senha || String(b.senha).length < 6) throw new BusinessError('Defina uma senha inicial (mín. 6 caracteres).');
     if (db.prepare('SELECT 1 FROM customers WHERE cnpj = ?').get(cnpj)) throw new BusinessError(`${U.docLabel(cnpj)} já cadastrado.`, 409);
     const info = db.prepare(`
-      INSERT INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, email, endereco, cidade, password_hash, status, notes, allowed_lines)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativo', ?, ?)`).run(
+      INSERT INTO customers (cnpj, razao_social, nome_fantasia, contato, telefone, email, endereco, cidade, password_hash, status, notes, allowed_lines, payment_days)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ativo', ?, ?, ?)`).run(
       cnpj, U.cleanText(b.razao_social, 150), U.cleanText(b.nome_fantasia, 150), U.cleanText(b.contato, 100),
       U.cleanText(b.telefone, 30), U.cleanText(b.email, 150), U.cleanText(b.endereco, 300), U.cleanText(b.cidade, 100),
-      hashPassword(b.senha), U.cleanText(b.notes, 500), readAllowedLines(b.allowed_lines),
+      hashPassword(b.senha), U.cleanText(b.notes, 500), readAllowedLines(b.allowed_lines), readPaymentDays(b.payment_days),
     );
     res.status(201).json({ id: Number(info.lastInsertRowid) });
   });
@@ -907,6 +940,7 @@ function createApp(db, { testMode = false } = {}) {
       val('razao_social', 150) || c.razao_social, val('nome_fantasia', 150), val('contato', 100), val('telefone', 30),
       val('email', 150), val('endereco', 300), val('cidade', 100), status, val('notes', 500), id,
     );
+    if (b.payment_days !== undefined) db.prepare('UPDATE customers SET payment_days = ? WHERE id = ?').run(readPaymentDays(b.payment_days), id);
     if (b.allowed_lines !== undefined) {
       db.prepare('UPDATE customers SET allowed_lines = ? WHERE id = ?').run(readAllowedLines(b.allowed_lines), id);
     }
@@ -921,7 +955,7 @@ function createApp(db, { testMode = false } = {}) {
 
   // ---------- admin: configurações e usuários ----------
   const EDITABLE_SETTINGS = ['store_name', 'store_subtitle', 'whatsapp', 'min_order_cents', 'auto_approve_customers',
-    'order_notice', 'out_note_threshold_cents', 'default_supplier'];
+    'order_notice', 'out_note_threshold_cents', 'default_supplier', 'b2b_payment_days'];
 
   admin.get('/config', (req, res) => res.json({ settings: getSettings(db) }));
 
@@ -941,6 +975,11 @@ function createApp(db, { testMode = false } = {}) {
       let value = String(b[key]).slice(0, 500);
       if (key === 'whatsapp') value = U.onlyDigits(value);
       if (key === 'auto_approve_customers') value = b[key] === true || b[key] === '1' ? '1' : '0';
+      if (key === 'b2b_payment_days') {
+        const days = Number(b[key]);
+        if (!Number.isInteger(days) || days < 0 || days > 365) throw new BusinessError('Prazo de recebimento inválido (0 a 365 dias).');
+        value = String(days);
+      }
       upsert.run(key, value);
     }
     res.json({ settings: getSettings(db) });
@@ -951,7 +990,8 @@ function createApp(db, { testMode = false } = {}) {
   admin.post('/locais', (req, res) => {
     const name = U.cleanText(req.body?.name, 80);
     if (!name) throw new BusinessError('Informe o nome da loja.');
-    db.prepare("INSERT INTO locations (name, kind, description) VALUES (?, 'loja', ?)").run(name, U.cleanText(req.body?.description, 200));
+    const info = db.prepare("INSERT INTO locations (name, kind, description) VALUES (?, 'loja', ?)").run(name, U.cleanText(req.body?.description, 200));
+    accounts.ensureCash({ id: Number(info.lastInsertRowid), name });
     res.status(201).json({ ok: true });
   });
   admin.put('/locais/:id', (req, res) => {
@@ -1017,6 +1057,7 @@ function createApp(db, { testMode = false } = {}) {
       locations: db.prepare("SELECT id, name FROM locations WHERE active = 1 ORDER BY kind, name").all(),
       cash_opening_cents: Number(getSettings(db).cash_opening_cents) || 0,
       intervals: INTERVALS,
+      bank_accounts: db.prepare("SELECT id, name, type FROM bank_accounts WHERE active = 1 AND kind = 'corrente' ORDER BY CASE type WHEN 'banco' THEN 0 WHEN 'cofre' THEN 1 ELSE 2 END, name").all(),
     });
   });
 
@@ -1075,6 +1116,7 @@ function createApp(db, { testMode = false } = {}) {
       account_id: account.id, description, amount_cents: amount,
       competence_date: date(b.competence_date, 'competência', true), due_date: date(b.due_date, 'vencimento'), paid_date: date(b.paid_date, 'pagamento'),
       location_id: loc ? loc.id : null, counterparty: U.cleanText(b.counterparty, 120), document: U.cleanText(b.document, 80), note: U.cleanText(b.note, 300),
+      bank_account_id: bankAccountId(b.bank_account_id),
     };
   }
   admin.get('/financeiro/lancamentos', (req, res) => {
@@ -1090,8 +1132,9 @@ function createApp(db, { testMode = false } = {}) {
     if (q.account_id) { where.push('e.account_id = ?'); params.push(Number(q.account_id)); }
     if (q.kind === 'receita' || q.kind === 'despesa') { where.push('a.kind = ?'); params.push(q.kind); }
     const entries = db.prepare(`
-      SELECT e.*, a.name AS account_name, a.kind, l.name AS location_name
+      SELECT e.*, a.name AS account_name, a.kind, l.name AS location_name, b.name AS bank_account_name
       FROM fin_entries e JOIN fin_accounts a ON a.id = e.account_id LEFT JOIN locations l ON l.id = e.location_id
+      LEFT JOIN bank_accounts b ON b.id = e.bank_account_id
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY ${field} DESC, e.id DESC LIMIT 1000`).all(...params);
     // Em aberto: no período escolhido (mesmo campo de data) e no total, incluindo as parcelas dos meses seguintes.
@@ -1107,8 +1150,8 @@ function createApp(db, { testMode = false } = {}) {
   admin.post('/financeiro/lancamentos', (req, res) => {
     const e = readEntry(req.body || {});
     const info = db.prepare(`INSERT INTO fin_entries (account_id, description, amount_cents, competence_date, due_date, paid_date, location_id,
-      counterparty, document, note, created_by) VALUES (@account_id, @description, @amount_cents, @competence_date, @due_date, @paid_date,
-      @location_id, @counterparty, @document, @note, @created_by)`).run({ ...e, created_by: req.admin.name });
+      counterparty, document, note, bank_account_id, created_by) VALUES (@account_id, @description, @amount_cents, @competence_date, @due_date, @paid_date,
+      @location_id, @counterparty, @document, @note, @bank_account_id, @created_by)`).run({ ...e, created_by: req.admin.name });
     res.status(201).json({ id: Number(info.lastInsertRowid) });
   });
   admin.put('/financeiro/lancamentos/:id', (req, res) => {
@@ -1117,9 +1160,36 @@ function createApp(db, { testMode = false } = {}) {
     const e = readEntry(req.body || {});
     db.prepare(`UPDATE fin_entries SET account_id = @account_id, description = @description, amount_cents = @amount_cents,
       competence_date = @competence_date, due_date = @due_date, paid_date = @paid_date, location_id = @location_id,
-      counterparty = @counterparty, document = @document, note = @note, updated_at = datetime('now') WHERE id = @id`).run({ ...e, id });
+      counterparty = @counterparty, document = @document, note = @note, bank_account_id = @bank_account_id,
+      updated_at = datetime('now') WHERE id = @id`).run({ ...e, id });
     res.json({ ok: true });
   });
+  // ---------- financeiro: contas (bancos, cofre, caixas) e transferências ----------
+  admin.get('/financeiro/saldos', (req, res) => {
+    const list = accounts.balances();
+    res.json({ accounts: list, total_cents: list.filter((a) => a.in_total).reduce((s, a) => s + a.current_cents, 0), types: accounts.TYPES });
+  });
+  admin.post('/financeiro/contas-bancarias', (req, res) => res.status(201).json({ id: accounts.create(req.body || {}) }));
+  admin.put('/financeiro/contas-bancarias/:id', (req, res) => {
+    accounts.update(idParam(req), req.body || {});
+    res.json({ ok: true });
+  });
+  admin.get('/financeiro/fluxo-futuro', (req, res) => {
+    const days = [30, 60, 90, 180].includes(Number(req.query.dias)) ? Number(req.query.dias) : 90;
+    res.json(cashflow.projection(days));
+  });
+  admin.get('/financeiro/transferencias', (req, res) => {
+    res.json({ transfers: accounts.transfers({ from: req.query.from, to: req.query.to, accountId: Number(req.query.account_id) || null }) });
+  });
+  admin.post('/financeiro/transferencias', (req, res) => {
+    const b = req.body || {};
+    res.status(201).json({ id: accounts.transfer({ from: b.from_account_id, to: b.to_account_id, amount: b.amount, date: b.date, note: b.note, user: req.admin.name }) });
+  });
+  admin.delete('/financeiro/transferencias/:id', (req, res) => {
+    accounts.removeTransfer(idParam(req));
+    res.json({ ok: true });
+  });
+
   // ---------- financeiro: contas recorrentes ----------
   admin.get('/financeiro/recorrentes', (req, res) => {
     recurring.generate();
@@ -1139,11 +1209,18 @@ function createApp(db, { testMode = false } = {}) {
     res.json({ removed: recurring.stop(idParam(req)) });
   });
 
+  const bankAccountId = (v) => {
+    if (v === undefined || v === null || v === '') return null;
+    const a = db.prepare('SELECT id FROM bank_accounts WHERE id = ?').get(Number(v));
+    if (!a) throw new BusinessError('Conta / caixa inválida.');
+    return a.id;
+  };
   admin.post('/financeiro/lancamentos/:id/pagar', (req, res) => {
     const id = idParam(req);
     const d = String(req.body?.paid_date || T.localDate());
     if (!T.isDate(d)) throw new BusinessError('Data inválida.');
-    const r = db.prepare("UPDATE fin_entries SET paid_date = ?, updated_at = datetime('now') WHERE id = ?").run(d, id);
+    const r = db.prepare("UPDATE fin_entries SET paid_date = ?, bank_account_id = COALESCE(?, bank_account_id), updated_at = datetime('now') WHERE id = ?")
+      .run(d, bankAccountId(req.body?.bank_account_id), id);
     if (!r.changes) throw new BusinessError('Lançamento não encontrado.', 404);
     res.json({ ok: true });
   });

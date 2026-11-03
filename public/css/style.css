@@ -83,6 +83,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 80px; }
 .grid { display: grid; gap: 16px; }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.grid-3 { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row > .grow { flex: 1; min-width: 180px; }
 .section-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -319,3 +320,14 @@ tr.row-danger .over-msg { color: var(--danger); }
 .lines-type:last-child { border-bottom: 0; }
 .lines-sub { display: flex; flex-wrap: wrap; gap: 2px 16px; padding-left: 24px; margin-top: 2px; }
 .lines-sub .check { font-weight: 400; color: var(--text); margin: 0; }
+
+/* Saldos e fluxo de caixa futuro */
+.accounts-grid .account-card { margin: 0; }
+.muted-card { background: #faf8fb; }
+.chart-wrap svg { display: block; max-width: 100%; }
+.chart-axis { font-size: 11px; fill: var(--muted); }
+.chart-label { font-size: 12px; font-weight: 600; fill: var(--text); }
+.chart-tip {
+  position: absolute; pointer-events: none; background: #fff; border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 10px; font-size: .82rem; box-shadow: 0 6px 18px rgba(40, 20, 50, .14); min-width: 150px;
+}

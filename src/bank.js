@@ -23,6 +23,8 @@ const defaultPattern = (desc) => normalize(desc).split(' ').filter((w) => w.leng
 function createBank(db) {
   const q = {
     findAccount: db.prepare('SELECT * FROM bank_accounts WHERE bank_code IS ? AND account_number = ? AND kind = ?'),
+    manualAccount: db.prepare(`SELECT * FROM bank_accounts b WHERE b.bank_code = ? AND b.kind = ? AND b.account_number = '' AND b.type = 'banco'
+      AND NOT EXISTS (SELECT 1 FROM bank_imports i WHERE i.bank_account_id = b.id) ORDER BY b.id LIMIT 1`),
     insertAccount: db.prepare('INSERT INTO bank_accounts (name, bank_code, bank_name, branch, account_number, kind) VALUES (?, ?, ?, ?, ?, ?)'),
     insertImport: db.prepare(`INSERT INTO bank_imports (bank_account_id, file_name, period_start, period_end, ledger_balance_cents, balance_date, created_by)
       VALUES (?, ?, ?, ?, ?, ?, ?)`),
@@ -67,6 +69,12 @@ function createBank(db) {
       }
       for (const st of statements) {
         let acc = q.findAccount.get(st.bank_code, st.account_number, st.kind);
+        // conta do mesmo banco cadastrada à mão, sem número e ainda sem extrato: passa a ser esta
+        const manual = !acc && q.manualAccount.get(st.bank_code, st.kind);
+        if (manual) {
+          db.prepare('UPDATE bank_accounts SET account_number = ?, branch = COALESCE(branch, ?) WHERE id = ?').run(st.account_number, st.branch, manual.id);
+          acc = manual;
+        }
         if (!acc) {
           const name = `${st.bank_name} ${st.kind === 'cartao' ? 'cartão ' : ''}${st.account_number}`;
           const id = Number(q.insertAccount.run(name, st.bank_code, st.bank_name, st.branch, st.account_number, st.kind).lastInsertRowid);
@@ -236,7 +244,8 @@ function createBank(db) {
   // Saldo inicial de cada conta = saldo informado pelo banco no último extrato − movimentos até aquela data.
   // Depois confere cada extrato importado: se o saldo calculado não bate com o do banco, falta (ou sobra) movimento.
   function accounts() {
-    const list = db.prepare('SELECT * FROM bank_accounts ORDER BY active DESC, kind, bank_name, account_number').all();
+    const list = db.prepare(`SELECT * FROM bank_accounts
+      ORDER BY active DESC, CASE type WHEN 'banco' THEN 0 WHEN 'cofre' THEN 1 ELSE 2 END, kind, bank_name, account_number`).all();
     const sumUntil = db.prepare('SELECT COALESCE(SUM(amount_cents), 0) v FROM bank_transactions WHERE bank_account_id = ? AND posted_date <= ?');
     return list.map((a) => {
       const stats = db.prepare(`SELECT COUNT(*) n, SUM(status = 'pendente') pending, MIN(posted_date) first, MAX(posted_date) last,
@@ -263,9 +272,11 @@ function createBank(db) {
     });
   }
 
-  // Soma dos saldos iniciais das contas correntes (para a DFC). Cartão de crédito não é caixa.
+  // Soma dos saldos iniciais das contas correntes (para a DFC). Cartão de crédito e caixa das lojas não entram.
+  // Sem extrato, vale o saldo inicial informado na conta (cofre, banco sem OFX).
   function openingTotal() {
-    return accounts().filter((a) => a.kind === 'corrente' && a.active && a.opening_cents !== null).reduce((s, a) => s + a.opening_cents, 0);
+    return accounts().filter((a) => a.kind === 'corrente' && a.active && a.type !== 'caixa')
+      .reduce((s, a) => s + (a.opening_cents ?? a.opening_balance_cents ?? 0), 0);
   }
 
   // ---------- relatório ----------

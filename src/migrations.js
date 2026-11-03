@@ -496,6 +496,46 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_fin_recurrence ON fin_entries(recurrence_id, due_date)');
     },
   },
+  {
+    version: 10,
+    name: 'Contas e saldos (bancos, cofre, caixas das lojas), transferências e contas a receber B2B',
+    up(db) {
+      const acols = db.prepare('PRAGMA table_info(bank_accounts)').all().map((c) => c.name);
+      // type: banco (com ou sem extrato OFX), cofre, caixa (de uma loja)
+      if (!acols.includes('type')) db.exec("ALTER TABLE bank_accounts ADD COLUMN type TEXT NOT NULL DEFAULT 'banco'");
+      if (!acols.includes('opening_balance_cents')) db.exec('ALTER TABLE bank_accounts ADD COLUMN opening_balance_cents INTEGER');
+      if (!acols.includes('opening_date')) db.exec('ALTER TABLE bank_accounts ADD COLUMN opening_date TEXT');
+      if (!acols.includes('location_id')) db.exec('ALTER TABLE bank_accounts ADD COLUMN location_id INTEGER REFERENCES locations(id)');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS fin_transfers (
+          id              INTEGER PRIMARY KEY,
+          from_account_id INTEGER NOT NULL REFERENCES bank_accounts(id),
+          to_account_id   INTEGER NOT NULL REFERENCES bank_accounts(id),
+          amount_cents    INTEGER NOT NULL CHECK (amount_cents > 0),
+          date            TEXT NOT NULL,
+          note            TEXT,
+          created_by      TEXT,
+          created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_transfer_date ON fin_transfers(date);
+      `);
+      const ins = db.prepare("INSERT OR IGNORE INTO bank_accounts (name, account_number, kind, type, location_id) VALUES (?, ?, 'corrente', ?, ?)");
+      ins.run('Cofre', 'COFRE', 'cofre', null);
+      for (const l of db.prepare("SELECT id, name FROM locations WHERE kind = 'loja' AND active = 1").all()) {
+        ins.run(`Caixa ${l.name}`, `CAIXA-${l.id}`, 'caixa', l.id);
+      }
+
+      // Contas a receber dos pedidos B2B entregues
+      const ecols = db.prepare('PRAGMA table_info(fin_entries)').all().map((c) => c.name);
+      if (!ecols.includes('order_id')) db.exec('ALTER TABLE fin_entries ADD COLUMN order_id INTEGER REFERENCES orders(id)');
+      db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_fin_order ON fin_entries(order_id) WHERE order_id IS NOT NULL');
+      const ccols = db.prepare('PRAGMA table_info(customers)').all().map((c) => c.name);
+      // prazo em dias; NULL = o padrão da configuração; -1 = não gera conta a receber (loja própria)
+      if (!ccols.includes('payment_days')) db.exec('ALTER TABLE customers ADD COLUMN payment_days INTEGER');
+      db.prepare('UPDATE customers SET payment_days = -1 WHERE cnpj = ?').run(LOJA2.cnpj);
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('b2b_payment_days', '30')").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
