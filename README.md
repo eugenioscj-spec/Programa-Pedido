@@ -26,6 +26,15 @@ O master cria os usuários em **Config. → Usuários do painel** (perfil Loja e
 - **Linhas liberadas:** em **Clientes → Editar**, o master escolhe o que cada cliente pode ver e pedir. Tipo inteiro marcado inclui as linhas que forem cadastradas depois; tudo marcado = sem restrição. O servidor também recusa pedido de produto fora das linhas liberadas.
 - **Favoritos:** o cliente toca na ☆ do produto e ele aparece na aba **★ Favoritos**, para pedir mais rápido.
 
+## Pedidos: PDF e exclusão
+
+- **PDF do pedido:** ao enviar o pedido o cliente baixa o PDF (dados dele, itens, total, observações); também em **Meus pedidos** e, no painel, no detalhe do pedido. Documento de conferência, sem valor fiscal.
+- **Excluir pedido** (mesmo entregue): só para master com a permissão "Pode excluir pedidos" (o dono, eugenio.scj@gmail.com, tem desde o início e pode liberar para outros masters em **Config. → Usuários**). Pede motivo e o número do pedido. Desfaz o ciclo: o estoque volta por **estorno** (com a data de hoje; o kardex continua imutável), a conta a receber do pedido é apagada (mesmo se já recebida) e, se estava conciliada, o movimento do banco volta para "a conciliar". O pedido some das listas e fica guardado como excluído para auditoria.
+
+## CRM (só master)
+
+Visitas, ligações, WhatsApp, e-mails e reuniões com clientes ou com quem ainda não é cliente (prospecção): como foi, com quem falou e a **próxima ação** com data. O painel mostra os contatos do mês, as ações atrasadas e as dos próximos 7 dias (botão **Feito**) e os **clientes sem contato** há 15/30/60/90 dias, com a data do último pedido. Em **Clientes**, o botão **CRM** abre o histórico daquele cliente.
+
 ## Financeiro: DRE e DFC (só master)
 
 Em **Financeiro**:

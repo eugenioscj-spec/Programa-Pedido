@@ -25,6 +25,10 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD) {
   }
 }
 
+// Permissão de excluir pedidos para o dono (master), mesmo que o usuário tenha sido criado depois.
+db.prepare("UPDATE admins SET can_delete_orders = 1 WHERE lower(email) = ? AND role = 'master'")
+  .run(require('./src/migrations').ORDER_DELETER_EMAIL);
+
 // Banco sem nenhum produto: carrega o Catálogo Oggi 2026 (sem estoque, sem clientes, sem lançamentos).
 if (db.prepare('SELECT COUNT(*) n FROM products').get().n === 0) {
   const r = require('./src/catalog').loadOggiCatalog(db);

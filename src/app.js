@@ -17,6 +17,8 @@ const { createRecurring, INTERVALS } = require('./recurring');
 const { createAccounts } = require('./accounts');
 const { createReceivables } = require('./receivables');
 const { createCashflow } = require('./cashflow');
+const { orderPdf } = require('./pdf');
+const { createCrm } = require('./crm');
 const T = require('./time');
 const U = require('./util');
 
@@ -78,6 +80,7 @@ function createApp(db, { testMode = false } = {}) {
   const accounts = createAccounts(db, bank);
   const receivables = createReceivables(db);
   const cashflow = createCashflow(db, accounts, recurring);
+  const crm = createCrm(db);
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -102,7 +105,7 @@ function createApp(db, { testMode = false } = {}) {
   const ROLES = { master: 'Master', loja: 'Loja' };
   function requireAdmin(req, res, next) {
     const id = sessions.userId(req, 'admin');
-    const admin = id && db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, l.name AS location_name
+    const admin = id && db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, a.can_delete_orders, l.name AS location_name
       FROM admins a LEFT JOIN locations l ON l.id = a.location_id WHERE a.id = ? AND a.active = 1`).get(id);
     if (!admin) return res.status(401).json({ error: 'Faça login no painel.' });
     req.admin = admin;
@@ -283,14 +286,26 @@ function createApp(db, { testMode = false } = {}) {
   });
 
   app.get('/api/pedidos', requireCustomer, (req, res) => {
-    const orders = db.prepare('SELECT * FROM orders WHERE customer_id = ? ORDER BY id DESC LIMIT 100').all(req.customer.id);
+    const orders = db.prepare('SELECT * FROM orders WHERE customer_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 100').all(req.customer.id);
     const items = db.prepare('SELECT product_id, product_name, unit_type, quantity, price_cents, subtotal_cents FROM order_items WHERE order_id = ?');
     res.json({ orders: orders.map((o) => ({ ...o, admin_notes: undefined, items: items.all(o.id) })) });
   });
 
+  async function sendOrderPdf(res, order) {
+    const pdf = await orderPdf(order, getSettings(db));
+    res.type('application/pdf');
+    res.set('Content-Disposition', `inline; filename="pedido-${order.id}.pdf"`);
+    res.send(pdf);
+  }
+  app.get('/api/pedidos/:id/pdf', requireCustomer, async (req, res) => {
+    const order = loadOrder(idParam(req));
+    if (!order || order.customer_id !== req.customer.id || order.deleted_at) throw new BusinessError('Pedido não encontrado.', 404);
+    await sendOrderPdf(res, order);
+  });
+
   app.post('/api/pedidos/:id/cancelar', requireCustomer, (req, res) => {
     const id = idParam(req);
-    const order = db.prepare('SELECT * FROM orders WHERE id = ? AND customer_id = ?').get(id, req.customer.id);
+    const order = db.prepare('SELECT * FROM orders WHERE id = ? AND customer_id = ? AND deleted_at IS NULL').get(id, req.customer.id);
     if (!order) throw new BusinessError('Pedido não encontrado.', 404);
     if (order.status !== 'novo') throw new BusinessError('Este pedido já foi aceito pela loja. Para cancelar, fale conosco.');
     inv.changeStatus({ orderId: id, status: 'cancelado', user: `cliente:${req.customer.cnpj}` });
@@ -401,7 +416,7 @@ function createApp(db, { testMode = false } = {}) {
   // ---------- admin: painel ----------
   admin.get('/dashboard', (req, res) => {
     const counts = Object.fromEntries(
-      db.prepare('SELECT status, COUNT(*) n FROM orders GROUP BY status').all().map((r) => [r.status, r.n]),
+      db.prepare('SELECT status, COUNT(*) n FROM orders WHERE deleted_at IS NULL GROUP BY status').all().map((r) => [r.status, r.n]),
     );
     const lowStock = db.prepare(`SELECT ${PRODUCT_COLS} FROM products p WHERE p.active = 1`).all()
       .map(withAvailability)
@@ -858,7 +873,7 @@ function createApp(db, { testMode = false } = {}) {
       SELECT o.*, c.razao_social, c.nome_fantasia, c.cnpj, c.telefone,
         (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) AS item_count
       FROM orders o JOIN customers c ON c.id = o.customer_id
-      ${status ? 'WHERE o.status = ?' : ''}
+      WHERE o.deleted_at IS NULL ${status ? 'AND o.status = ?' : ''}
       ORDER BY CASE o.status WHEN 'novo' THEN 0 WHEN 'confirmado' THEN 1 WHEN 'separado' THEN 2 ELSE 3 END, o.id DESC
       LIMIT 300`).all(...(status ? [status] : []));
     res.json({ orders: rows });
@@ -868,6 +883,30 @@ function createApp(db, { testMode = false } = {}) {
     const order = loadOrder(idParam(req));
     if (!order) throw new BusinessError('Pedido não encontrado.', 404);
     res.json({ order });
+  });
+
+  // Excluir pedido (mesmo entregue): estorna o estoque, apaga a conta a receber dele e desfaz a
+  // conciliação bancária dessa conta, se houver. Só para quem tem a permissão.
+  admin.delete('/pedidos/:id', (req, res) => {
+    if (!req.admin.can_delete_orders) throw new BusinessError('Você não tem permissão para excluir pedidos.', 403);
+    const id = idParam(req);
+    const result = db.transaction(() => {
+      inv.deleteOrder({ orderId: id, user: req.admin.name, reason: req.body?.reason });
+      const entries = db.prepare('SELECT id, paid_date FROM fin_entries WHERE order_id = ?').all(id);
+      let unlinked = 0;
+      for (const e of entries) {
+        unlinked += db.prepare("UPDATE bank_transactions SET status = 'pendente', entry_id = NULL, link_type = NULL, note = NULL WHERE entry_id = ?").run(e.id).changes;
+        db.prepare('DELETE FROM fin_entries WHERE id = ?').run(e.id);
+      }
+      return { receivables_removed: entries.length, received_removed: entries.filter((e) => e.paid_date).length, bank_unlinked: unlinked };
+    })();
+    res.json({ ok: true, ...result });
+  });
+
+  admin.get('/pedidos/:id/pdf', async (req, res) => {
+    const order = loadOrder(idParam(req));
+    if (!order) throw new BusinessError('Pedido não encontrado.', 404);
+    await sendOrderPdf(res, order);
   });
 
   admin.post('/pedidos/:id/status', (req, res) => {
@@ -881,6 +920,25 @@ function createApp(db, { testMode = false } = {}) {
     const id = idParam(req);
     inv.editOrderItems({ orderId: id, changes: req.body?.changes || [] });
     res.json({ order: loadOrder(id) });
+  });
+
+  // ---------- admin: CRM (visitas e contatos) ----------
+  admin.get('/crm', (req, res) => {
+    const q = req.query;
+    res.json({ interactions: crm.list({ customerId: q.customer_id, kind: q.kind, from: q.from, to: q.to, q: q.q }), kinds: crm.KINDS });
+  });
+  admin.get('/crm/resumo', (req, res) => {
+    const days = [15, 30, 60, 90].includes(Number(req.query.dias)) ? Number(req.query.dias) : 30;
+    res.json(crm.summary({ days }));
+  });
+  admin.post('/crm', (req, res) => res.status(201).json({ id: crm.create(req.body || {}, req.admin.name) }));
+  admin.put('/crm/:id', (req, res) => {
+    crm.update(idParam(req), req.body || {});
+    res.json({ ok: true });
+  });
+  admin.delete('/crm/:id', (req, res) => {
+    crm.remove(idParam(req));
+    res.json({ ok: true });
   });
 
   // ---------- admin: clientes ----------
@@ -1268,7 +1326,7 @@ function createApp(db, { testMode = false } = {}) {
 
   admin.get('/usuarios', (req, res) => {
     res.json({
-      admins: db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, a.active, a.created_at, l.name AS location_name
+      admins: db.prepare(`SELECT a.id, a.name, a.email, a.role, a.location_id, a.active, a.can_delete_orders, a.created_at, l.name AS location_name
         FROM admins a LEFT JOIN locations l ON l.id = a.location_id ORDER BY a.active DESC, a.role, a.name`).all(),
     });
   });
@@ -1283,6 +1341,12 @@ function createApp(db, { testMode = false } = {}) {
     }
     return { role, locationId };
   }
+  // Só quem já pode excluir pedidos libera ou tira essa permissão; e só master pode ter.
+  const deletePermission = (req, role, current) => {
+    if (role !== 'master') return 0;
+    if (req.body?.can_delete_orders === undefined || !req.admin.can_delete_orders) return current;
+    return req.body.can_delete_orders === true || req.body.can_delete_orders === '1' ? 1 : 0;
+  };
   const activeMasters = () => db.prepare("SELECT COUNT(*) n FROM admins WHERE role = 'master' AND active = 1").get().n;
 
   admin.post('/usuarios', (req, res) => {
@@ -1290,8 +1354,8 @@ function createApp(db, { testMode = false } = {}) {
     if (!name || !email || !senha || String(senha).length < 8) throw new BusinessError('Informe nome, e-mail e senha (mín. 8 caracteres).');
     if (db.prepare('SELECT 1 FROM admins WHERE email = ?').get(String(email).trim())) throw new BusinessError('E-mail já cadastrado.', 409);
     const { role, locationId } = readUserRole(req.body);
-    db.prepare('INSERT INTO admins (name, email, password_hash, role, location_id) VALUES (?, ?, ?, ?, ?)')
-      .run(U.cleanText(name, 100), U.cleanText(email, 150), hashPassword(senha), role, locationId);
+    db.prepare('INSERT INTO admins (name, email, password_hash, role, location_id, can_delete_orders) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(U.cleanText(name, 100), U.cleanText(email, 150), hashPassword(senha), role, locationId, deletePermission(req, role, 0));
     res.status(201).json({ ok: true });
   });
 
@@ -1305,8 +1369,8 @@ function createApp(db, { testMode = false } = {}) {
     const losesMaster = u.role === 'master' && u.active && (role !== 'master' || !active);
     if (losesMaster && activeMasters() <= 1) throw new BusinessError('Precisa existir ao menos um usuário master ativo.');
     if (id === req.admin.id && losesMaster) throw new BusinessError('Você não pode tirar o seu próprio acesso de master.');
-    db.prepare('UPDATE admins SET name = ?, role = ?, location_id = ?, active = ? WHERE id = ?')
-      .run(U.cleanText(b.name, 100) || u.name, role, locationId, active, id);
+    db.prepare('UPDATE admins SET name = ?, role = ?, location_id = ?, active = ?, can_delete_orders = ? WHERE id = ?')
+      .run(U.cleanText(b.name, 100) || u.name, role, locationId, active, deletePermission(req, role, u.can_delete_orders), id);
     if (b.senha) {
       if (String(b.senha).length < 8) throw new BusinessError('A senha precisa ter ao menos 8 caracteres.');
       db.prepare('UPDATE admins SET password_hash = ? WHERE id = ?').run(hashPassword(b.senha), id);

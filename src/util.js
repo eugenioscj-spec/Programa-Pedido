@@ -29,6 +29,13 @@ function isValidCpf(value) {
 const isValidDoc = (value) => isValidCnpj(value) || isValidCpf(value);
 const docLabel = (value) => (onlyDigits(value).length === 11 ? 'CPF' : 'CNPJ');
 
+// CPF (11) ou CNPJ (14) formatado.
+function formatDoc(value) {
+  const c = onlyDigits(value);
+  if (c.length === 11) return c.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  return formatCnpj(value);
+}
+
 function formatCnpj(value) {
   const c = onlyDigits(value);
   if (c.length !== 14) return value;
@@ -100,4 +107,4 @@ function toCsv(rows, columns) {
 const centsToBr = (c) => (Number(c || 0) / 100).toFixed(2).replace('.', ',');
 
 module.exports = {
-  isValidCpf, isValidDoc, docLabel, onlyDigits, isValidCnpj, formatCnpj, toCents, cleanText, cleanBarcode, parseCsv, toCsv, centsToBr };
+  isValidCpf, isValidDoc, docLabel, formatDoc, onlyDigits, isValidCnpj, formatCnpj, toCents, cleanText, cleanBarcode, parseCsv, toCsv, centsToBr };

@@ -85,6 +85,7 @@ function setView(view) {
     'loja-cofre': renderVault,
     produtos: renderProducts,
     clientes: renderCustomers,
+    crm: renderCrm,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
@@ -248,9 +249,11 @@ async function openOrder(id) {
       ${editable ? '<button class="btn-ok" id="btn-pick">📦 Separar (conferir e dar baixa)</button>' : ''}
       ${o.status === 'separado' ? '<button class="btn-ok" data-status="entregue">🚚 Marcar como entregue</button>' : ''}
       <button class="btn-secondary" id="btn-print">🖨 Imprimir</button>
+      <a class="btn btn-secondary" href="/api/admin/pedidos/${o.id}/pdf" target="_blank" rel="noopener">📄 PDF</a>
       ${waPhone ? `<a class="btn btn-secondary" target="_blank" rel="noopener" href="https://wa.me/${waPhone}?text=${encodeURIComponent(waMsg)}">WhatsApp do cliente</a>` : ''}
       <span style="flex:1"></span>
       ${['novo', 'confirmado', 'separado'].includes(o.status) ? '<button class="btn-danger" data-status="cancelado">Cancelar pedido</button>' : ''}
+      ${A.admin.can_delete_orders ? '<button class="btn-danger" id="btn-delete-order">🗑 Excluir pedido</button>' : ''}
     </div>
     ${o.status === 'separado' ? '<p class="small muted">A baixa no estoque já foi feita. Se cancelar, os produtos voltam para o estoque (estorno).</p>' : ''}
   `, { wide: true });
@@ -274,6 +277,8 @@ async function openOrder(id) {
   const pick = $('#btn-pick', m);
   if (pick) pick.addEventListener('click', () => openPicking(o, notes()));
   $('#btn-print', m).addEventListener('click', () => printOrder(o));
+  const delBtn = $('#btn-delete-order', m);
+  if (delBtn) delBtn.addEventListener('click', () => openDeleteOrder(o));
 }
 
 function printOrder(o) {
@@ -1108,6 +1113,7 @@ async function renderCustomers() {
         <td>${statusTag(c.status)}</td>
         <td class="nowrap">
           ${c.status === 'pendente' ? `<button class="btn-ok btn-sm" data-approve="${c.id}">Aprovar</button>` : ''}
+          <button class="btn-secondary btn-sm" data-crm="${c.id}">CRM</button>
           <button class="btn-secondary btn-sm" data-edit="${c.id}">Editar</button>
         </td>
       </tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum cliente ainda.</td></tr>';
@@ -1116,6 +1122,7 @@ async function renderCustomers() {
       toast('Cliente aprovado! Avise pelo WhatsApp que já pode pedir.', 'ok');
       renderCustomers();
     })));
+    $$('[data-crm]').forEach((b) => b.addEventListener('click', () => { CRM.customer = Number(b.dataset.crm); setView('crm'); }));
     $$('[data-edit]').forEach((b) => b.addEventListener('click', () => guard(() => openCustomerForm(customers.find((c) => c.id === Number(b.dataset.edit))))));
   };
   draw();
@@ -1358,6 +1365,34 @@ async function renderConfig() {
   $$('[data-user]').forEach((b) => b.addEventListener('click', () => openUserForm(admins.find((a) => a.id === Number(b.dataset.user)), storeOptions)));
 }
 
+// Exclusão de pedido em qualquer situação, desfazendo estoque, conta a receber e conciliação.
+function openDeleteOrder(o) {
+  const effects = [
+    o.stock_deducted ? 'o estoque volta para a câmara (estorno das saídas, com a data de hoje)' : 'nenhum estoque tinha saído ainda',
+    o.status === 'entregue' ? 'a conta a receber deste pedido é apagada do Financeiro (mesmo se já recebida) e, se estava conciliada com o banco, o movimento do extrato volta para “a conciliar”' : null,
+    'o pedido some das listas da loja e do cliente (fica guardado só para auditoria)',
+  ].filter(Boolean);
+  const m = openModal(`
+    <div class="modal-head"><h2>Excluir pedido #${o.id}</h2><button class="modal-close" data-close>×</button></div>
+    <div class="alert alert-error"><strong>Isto desfaz todo o ciclo do pedido:</strong><ul style="margin:6px 0 0;padding-left:18px">${effects.map((e) => `<li>${esc(e)}</li>`).join('')}</ul></div>
+    <form id="form-del-order">
+      <div class="field"><label>Motivo *</label><input name="reason" required placeholder="Ex.: pedido lançado em duplicidade"></div>
+      <div class="field"><label>Para confirmar, digite o número do pedido</label><input name="confirm" required inputmode="numeric" autocomplete="off"></div>
+      <div class="row"><button type="submit" class="btn-danger">Excluir definitivamente</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
+    </form>`);
+  const form = $('#form-del-order', m);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitWith(form, async (data) => {
+      if (String(data.confirm).trim() !== String(o.id)) throw new Error('O número digitado não confere.');
+      const r = await api(`/api/admin/pedidos/${o.id}`, { method: 'DELETE', body: { reason: data.reason } });
+      toast(`Pedido #${o.id} excluído${r.receivables_removed ? ' · conta a receber apagada' : ''}${r.bank_unlinked ? ' · conciliação desfeita' : ''}.`, 'ok');
+      closeModal();
+      if (A.view === 'pedidos') renderOrders(); else refreshBadges();
+    });
+  });
+}
+
 function openUserForm(u, storeOptions) {
   const m = openModal(`
     <div class="modal-head"><h2>Usuário: ${esc(u.name)}</h2><button class="modal-close" data-close>×</button></div>
@@ -1370,6 +1405,7 @@ function openUserForm(u, storeOptions) {
         <div class="field"><label>Nova senha (vazio = manter)</label><input name="senha" type="text" minlength="8" autocomplete="off"></div>
       </div>
       <label class="check" style="margin-bottom:12px"><input type="checkbox" name="active" ${u.active ? 'checked' : ''}> Ativo (pode entrar no painel)</label>
+      ${A.admin.can_delete_orders ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" name="can_delete_orders" ${u.can_delete_orders ? 'checked' : ''}> Pode excluir pedidos (inclusive entregues; só master)</label>` : ''}
       <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button></div>
     </form>`);
   const sel = $('#edit-role', m);
@@ -1644,6 +1680,135 @@ async function renderRestock() {
     toast('Reposição registrada!', 'ok');
     restockLines = [];
     renderRestock();
+  }));
+}
+
+// ======================= CRM =======================
+const CRM = { customer: null, kind: '', q: '', days: 30 };
+const CRM_ICON = { visita: '🚗', ligacao: '📞', whatsapp: '💬', email: '✉️', reuniao: '🤝', outro: '•' };
+const crmName = (i) => (i.customer_id ? (i.nome_fantasia || i.razao_social) : `${i.prospect_name} (prospecção)`);
+
+async function renderCrm() {
+  const qs = new URLSearchParams({ customer_id: CRM.customer || '', kind: CRM.kind, q: CRM.q }).toString();
+  const [{ interactions, kinds }, sum, { customers }] = await Promise.all([
+    api(`/api/admin/crm?${qs}`), api(`/api/admin/crm/resumo?dias=${CRM.days}`), api('/api/admin/clientes')]);
+  A.crmCustomers = customers;
+  A.crmKinds = kinds;
+  const overdue = sum.pending.filter((p) => p.overdue).length;
+  const week = sum.pending.filter((p) => !p.overdue && p.next_action_date && p.next_action_date <= addDaysLocal(todayLocal(), 7)).length;
+  const selected = CRM.customer && customers.find((c) => c.id === CRM.customer);
+  app.innerHTML = `
+    <div class="section-head"><h1>CRM${selected ? ` · ${esc(selected.nome_fantasia || selected.razao_social)}` : ''}</h1><span class="spacer"></span>
+      <button id="btn-new-crm">+ Registrar contato</button></div>
+    <div class="grid grid-4" style="margin-bottom:14px">
+      <div class="card stat"><div class="label">Contatos no mês</div><div class="value">${sum.month.total}</div>
+        <div class="small muted">${Object.entries(sum.month.by_kind).map(([k, n]) => `${esc(kinds[k])}: ${n}`).join(' · ') || '—'}</div></div>
+      <div class="card stat"><div class="label">Ações atrasadas</div><div class="value ${overdue ? 'qty-neg' : ''}">${overdue}</div></div>
+      <div class="card stat"><div class="label">Ações nos próximos 7 dias</div><div class="value">${week}</div></div>
+      <div class="card stat"><div class="label">Clientes sem contato há ${sum.days}+ dias</div><div class="value">${sum.quiet.length}</div></div>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:14px">
+      <div class="card" style="padding:0"><div style="padding:14px 14px 0"><h2 style="margin:0">Próximas ações</h2></div><div class="table-wrap"><table>
+        <tbody>${sum.pending.map((p) => `<tr class="${p.overdue ? 'row-danger' : ''}">
+          <td class="nowrap">${p.next_action_date ? fmtDate(p.next_action_date, false) : '<span class="muted">sem data</span>'}${p.overdue ? '<div class="small qty-neg">atrasada</div>' : ''}</td>
+          <td><strong>${esc(crmName(p))}</strong><div class="small">${esc(p.next_action)}</div></td>
+          <td class="nowrap"><button class="btn-ok btn-sm" data-crm-done="${p.id}">Feito</button></td></tr>`).join('')
+          || '<tr><td class="empty">Nenhuma ação pendente.</td></tr>'}</tbody></table></div></div>
+      <div class="card" style="padding:0"><div class="row" style="padding:14px 14px 0"><h2 style="margin:0" class="grow">Sem contato há mais de</h2>
+        <select id="crm-days" style="width:auto">${[15, 30, 60, 90].map((d) => `<option value="${d}" ${d === CRM.days ? 'selected' : ''}>${d} dias</option>`).join('')}</select></div>
+        <div class="table-wrap"><table><tbody>${sum.quiet.slice(0, 50).map((c) => `<tr>
+          <td><strong>${esc(c.nome_fantasia || c.razao_social)}</strong><div class="small muted">${esc(c.cidade || '')}${c.telefone ? ` · ${esc(c.telefone)}` : ''}</div></td>
+          <td class="small nowrap">último contato: ${c.last_contact ? fmtDate(c.last_contact, false) : 'nunca'}<div class="muted">último pedido: ${c.last_order_at ? fmtDate(c.last_order_at, false) : 'nunca'}</div></td>
+          <td><button class="btn-secondary btn-sm" data-crm-new="${c.id}">Registrar</button></td></tr>`).join('')
+          || '<tr><td class="empty">Todos os clientes tiveram contato recente. 👏</td></tr>'}</tbody></table></div></div>
+    </div>
+    <form class="card" id="crm-filter"><div class="row">
+      <div class="field grow"><label>Cliente</label><select id="crm-f-customer"><option value="">Todos</option>
+        ${customers.map((c) => `<option value="${c.id}" ${c.id === CRM.customer ? 'selected' : ''}>${esc(c.nome_fantasia || c.razao_social)}</option>`).join('')}</select></div>
+      <div class="field"><label>Tipo</label><select id="crm-f-kind"><option value="">Todos</option>
+        ${Object.entries(kinds).map(([k, l]) => `<option value="${k}" ${k === CRM.kind ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+      <div class="field grow"><label>Buscar no texto</label><input type="search" id="crm-f-q" value="${esc(CRM.q)}"></div>
+      <div class="field"><label>&nbsp;</label><button type="submit">Filtrar</button></div>
+    </div></form>
+    <div class="card" style="padding:0"><div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Cliente / contato</th><th>Como foi</th><th class="hide-sm">Próxima ação</th><th></th></tr></thead>
+      <tbody>${interactions.map((i) => `<tr>
+        <td class="nowrap">${fmtDate(i.date, false)}<div class="small muted">${CRM_ICON[i.kind] || ''} ${esc(kinds[i.kind])}</div></td>
+        <td><strong>${esc(crmName(i))}</strong>${i.contact_person ? `<div class="small muted">com ${esc(i.contact_person)}</div>` : ''}</td>
+        <td class="small" style="white-space:pre-wrap">${esc(i.summary)}</td>
+        <td class="hide-sm small">${i.next_action ? `${esc(i.next_action)}${i.next_action_date ? `<div class="muted">${fmtDate(i.next_action_date, false)}</div>` : ''}${i.next_done ? ' <span class="tag tag-entregue">feito</span>' : ''}` : '—'}</td>
+        <td class="nowrap"><button class="btn-secondary btn-sm" data-crm-edit="${i.id}">Editar</button></td></tr>`).join('')
+        || '<tr><td colspan="5" class="empty">Nenhum contato registrado. Use “+ Registrar contato”.</td></tr>'}</tbody></table></div></div>`;
+  $('#btn-new-crm').addEventListener('click', () => openCrmForm(null, CRM.customer));
+  $$('[data-crm-new]').forEach((b) => b.addEventListener('click', () => openCrmForm(null, Number(b.dataset.crmNew))));
+  $$('[data-crm-edit]').forEach((b) => b.addEventListener('click', () => openCrmForm(interactions.find((i) => i.id === Number(b.dataset.crmEdit)))));
+  $$('[data-crm-done]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    await api(`/api/admin/crm/${b.dataset.crmDone}`, { method: 'PUT', body: { next_done: true } });
+    toast('Ação concluída.', 'ok');
+    renderCrm();
+  })));
+  $('#crm-days').addEventListener('change', (e) => { CRM.days = Number(e.target.value); guard(renderCrm); });
+  $('#crm-filter').addEventListener('submit', (e) => {
+    e.preventDefault();
+    CRM.customer = Number($('#crm-f-customer').value) || null;
+    CRM.kind = $('#crm-f-kind').value;
+    CRM.q = $('#crm-f-q').value.trim();
+    guard(renderCrm);
+  });
+}
+
+const addDaysLocal = (d, n) => new Date(Date.parse(`${d}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+
+function openCrmForm(i, customerId = null) {
+  const v = i || { kind: 'visita', date: todayLocal(), customer_id: customerId };
+  const isProspect = i ? !i.customer_id : false;
+  const m = openModal(`
+    <div class="modal-head"><h2>${i ? 'Editar contato' : 'Registrar contato'}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="form-crm">
+      <div class="tabs"><button type="button" data-who="cliente" class="${isProspect ? '' : 'active'}">Cliente</button>
+        <button type="button" data-who="prospect" class="${isProspect ? 'active' : ''}">Ainda não é cliente</button></div>
+      <div class="form-grid">
+        <div class="field ${isProspect ? 'hidden' : ''}" id="crm-who-c"><label>Cliente *</label><select name="customer_id"><option value="">Escolha…</option>
+          ${A.crmCustomers.map((c) => `<option value="${c.id}" ${c.id === v.customer_id ? 'selected' : ''}>${esc(c.nome_fantasia || c.razao_social)}</option>`).join('')}</select></div>
+        <div class="field ${isProspect ? '' : 'hidden'}" id="crm-who-p"><label>Nome do estabelecimento *</label><input name="prospect_name" value="${esc(v.prospect_name || '')}"></div>
+        <div class="field"><label>Tipo</label><select name="kind">${Object.entries(A.crmKinds).map(([k, l]) => `<option value="${k}" ${k === v.kind ? 'selected' : ''}>${CRM_ICON[k]} ${esc(l)}</option>`).join('')}</select></div>
+        <div class="field"><label>Data</label><input type="date" name="date" value="${esc(v.date)}" required></div>
+        <div class="field"><label>Falou com</label><input name="contact_person" value="${esc(v.contact_person || '')}" placeholder="Ex.: João (gerente)"></div>
+      </div>
+      <div class="field"><label>Como foi *</label><textarea name="summary" required rows="4" placeholder="Assuntos, pedidos, reclamações, oportunidades…">${esc(v.summary || '')}</textarea></div>
+      <div class="form-grid">
+        <div class="field"><label>Próxima ação</label><input name="next_action" value="${esc(v.next_action || '')}" placeholder="Ex.: levar amostra do Sensa"></div>
+        <div class="field"><label>Até quando</label><input type="date" name="next_action_date" value="${esc(v.next_action_date || '')}"></div>
+      </div>
+      ${i && i.next_action ? `<label class="check" style="margin-bottom:10px"><input type="checkbox" name="next_done" ${i.next_done ? 'checked' : ''}> Próxima ação já feita</label>` : ''}
+      <div class="row"><button type="submit">Salvar</button><button type="button" class="btn-secondary" data-close>Cancelar</button>
+        ${i ? '<span style="flex:1"></span><button type="button" class="btn-danger" id="btn-del-crm">Excluir</button>' : ''}</div>
+    </form>`, { wide: true });
+  let who = isProspect ? 'prospect' : 'cliente';
+  $$('[data-who]', m).forEach((b) => b.addEventListener('click', () => {
+    who = b.dataset.who;
+    $$('[data-who]', m).forEach((x) => x.classList.toggle('active', x === b));
+    $('#crm-who-c', m).classList.toggle('hidden', who !== 'cliente');
+    $('#crm-who-p', m).classList.toggle('hidden', who !== 'prospect');
+  }));
+  const form = $('#form-crm', m);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitWith(form, async (data) => {
+      if (who === 'cliente') data.prospect_name = ''; else data.customer_id = '';
+      if (i) await api(`/api/admin/crm/${i.id}`, { method: 'PUT', body: data });
+      else await api('/api/admin/crm', { method: 'POST', body: data });
+      toast('Contato salvo.', 'ok');
+      closeModal();
+      renderCrm();
+    });
+  });
+  const del = $('#btn-del-crm', m);
+  if (del) del.addEventListener('click', () => guard(async () => {
+    if (!confirm('Excluir este registro do CRM?')) return;
+    await api(`/api/admin/crm/${i.id}`, { method: 'DELETE' });
+    closeModal();
+    renderCrm();
   }));
 }
 

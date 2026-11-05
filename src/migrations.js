@@ -90,6 +90,9 @@ const LOJA2 = {
   notes: 'Loja própria ligada à câmara. Os pedidos dela vão virar transferência para o estoque da loja (a desenvolver).',
 };
 
+// Quem pode excluir pedidos (inclusive entregues) desde o início; depois ele pode liberar outros masters.
+const ORDER_DELETER_EMAIL = 'eugenio.scj@gmail.com';
+
 // Picolés Disney: o personagem da embalagem passa a fazer parte do nome.
 const DISNEY_NAMES = [
   ['disney-leite-cacau', 'Picolé Disney Leite com Cacau', 'Picolé Disney Mickey Leite com Cacau'],
@@ -536,6 +539,40 @@ const MIGRATIONS = [
       db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('b2b_payment_days', '30')").run();
     },
   },
+  {
+    version: 11,
+    name: 'Exclusão de pedido com o ciclo desfeito (permissão por usuário) e CRM',
+    up(db) {
+      const ocols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name);
+      if (!ocols.includes('deleted_at')) db.exec('ALTER TABLE orders ADD COLUMN deleted_at TEXT');
+      if (!ocols.includes('deleted_by')) db.exec('ALTER TABLE orders ADD COLUMN deleted_by TEXT');
+      if (!ocols.includes('delete_reason')) db.exec('ALTER TABLE orders ADD COLUMN delete_reason TEXT');
+      const acols = db.prepare('PRAGMA table_info(admins)').all().map((c) => c.name);
+      if (!acols.includes('can_delete_orders')) db.exec('ALTER TABLE admins ADD COLUMN can_delete_orders INTEGER NOT NULL DEFAULT 0');
+      db.prepare("UPDATE admins SET can_delete_orders = 1 WHERE lower(email) = ? AND role = 'master'").run(ORDER_DELETER_EMAIL);
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS crm_interactions (
+          id               INTEGER PRIMARY KEY,
+          customer_id      INTEGER REFERENCES customers(id),
+          prospect_name    TEXT,                  -- contato com quem ainda não é cliente
+          kind             TEXT NOT NULL DEFAULT 'visita' CHECK (kind IN ('visita', 'ligacao', 'whatsapp', 'email', 'reuniao', 'outro')),
+          date             TEXT NOT NULL,
+          contact_person   TEXT,
+          summary          TEXT NOT NULL,
+          next_action      TEXT,
+          next_action_date TEXT,
+          next_done        INTEGER NOT NULL DEFAULT 0,
+          created_by       TEXT,
+          created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+          CHECK (customer_id IS NOT NULL OR prospect_name IS NOT NULL)
+        );
+        CREATE INDEX IF NOT EXISTS idx_crm_customer ON crm_interactions(customer_id, date);
+        CREATE INDEX IF NOT EXISTS idx_crm_next ON crm_interactions(next_done, next_action_date);
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -585,4 +622,4 @@ function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = 
   return { from, to: version, backup };
 }
 
-module.exports = { runMigrations, LATEST_VERSION, LOJA2, TEST_BARCODES, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
+module.exports = { runMigrations, LATEST_VERSION, LOJA2, TEST_BARCODES, ORDER_DELETER_EMAIL, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };

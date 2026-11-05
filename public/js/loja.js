@@ -408,6 +408,7 @@ function renderSuccess(order) {
         <p>Total: <strong>${money(order.total_cents)}</strong></p>
         <p class="muted">A loja vai conferir e confirmar seu pedido. Você acompanha o andamento em “Meus pedidos”.</p>
         <div class="row" style="justify-content:center">
+          <a class="btn" href="/api/pedidos/${order.id}/pdf" target="_blank" rel="noopener">📄 Baixar PDF do pedido</a>
           ${wa ? `<a class="btn btn-ok" target="_blank" rel="noopener" href="https://wa.me/${esc(wa)}?text=${encodeURIComponent(msg)}">Avisar no WhatsApp</a>` : ''}
           <button class="btn-secondary" data-go="pedidos">Ver meus pedidos</button>
         </div>
@@ -444,6 +445,7 @@ async function renderOrders() {
         </ul>
         ${o.delivery_date ? `<div class="small muted" style="margin-top:6px">Entrega desejada: ${fmtDate(o.delivery_date, false)}</div>` : ''}
         <div class="row" style="margin-top:10px">
+          <a class="btn btn-secondary btn-sm" href="/api/pedidos/${o.id}/pdf" target="_blank" rel="noopener">📄 PDF</a>
           <button class="btn-secondary btn-sm" data-repeat="${o.id}">Repetir pedido</button>
           ${o.status === 'novo' ? `<button class="btn-danger btn-sm" data-cancel="${o.id}">Cancelar</button>` : ''}
         </div>

@@ -491,7 +491,25 @@ function createInventory(db) {
     return q.order.get(orderId);
   });
 
+  // Exclui o pedido em qualquer situação, desfazendo o estoque: as saídas viram estorno (datado de hoje)
+  // e o pedido some das listas (fica guardado como cancelado/excluído para auditoria).
+  const deleteOrder = db.transaction(({ orderId, user, reason, at }) => {
+    const order = q.order.get(orderId);
+    if (!order || order.deleted_at) throw new BusinessError('Pedido não encontrado.', 404);
+    if (!String(reason || '').trim()) throw new BusinessError('Informe o motivo da exclusão.');
+    if (order.stock_deducted) {
+      for (const m of q.orderSales.all(orderId)) {
+        reverseMovement({ movementId: m.id, reason: `Exclusão do pedido #${orderId}: ${reason}`, user, at, fromOrderCancel: true });
+      }
+    }
+    db.prepare(`UPDATE orders SET status = 'cancelado', stock_deducted = 0, cancelled_at = COALESCE(cancelled_at, ?, datetime('now')),
+      deleted_at = COALESCE(?, datetime('now')), deleted_by = ?, delete_reason = ? WHERE id = ?`)
+      .run(at || null, at || null, user, String(reason).trim().slice(0, 300), orderId);
+    return q.order.get(orderId);
+  });
+
   return {
+    deleteOrder,
     reservedUnits,
     availableUnits,
     unavailableProducts,
