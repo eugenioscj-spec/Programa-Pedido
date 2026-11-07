@@ -49,6 +49,17 @@ function redactUrl(u) {
     return u;
   }
 }
+// Páginas de relatório: guarda o HTML para entendermos a tabela, sem os códigos de segurança.
+function redactHtml(html) {
+  return html
+    .replace(/(name=["']?_token["']?[^>]*?value=["'])[^"']*/gi, '$1***')
+    .replace(/(value=["'])[^"']*(["'][^>]*name=["']?_token)/gi, '$1***$2')
+    .replace(/(<meta[^>]+name=["']csrf-token["'][^>]+content=["'])[^"']*/gi, '$1***')
+    .replace(/(["']?(?:_token|csrf_token|csrfToken|api_token|access_token|token|password|senha)["']?\s*[:=]\s*["'])[^"']*/gi, '$1***')
+    .replace(/eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{10,}/g, '***');
+}
+let pageCount = 0;
+
 const cleanHeaders = (h) => Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k, SECRET_KEY.test(k) ? '***' : v]));
 
 // Procura o Chrome/Edge do computador em todos os lugares comuns do Windows (inclusive o Chrome
@@ -95,6 +106,7 @@ const ask = (q) => new Promise((resolve) => {
     process.exit(1);
   }
   fs.mkdirSync(path.join(OUT, 'arquivos'), { recursive: true });
+  fs.mkdirSync(path.join(OUT, 'paginas'), { recursive: true });
   const records = [];
   const browser = await launch(chromium);
   if (!browser) {
@@ -122,6 +134,15 @@ const ask = (q) => new Promise((resolve) => {
       } catch { /* resposta sem corpo */ }
     } else if (kind === 'document') {
       body = `[página HTML, ${type}]`;
+      if (/text\/html/i.test(type) && /\/sistema\/(relatorios|empresa|vendas|produtos)/i.test(new URL(req.url()).pathname)) {
+        try {
+          const html = redactHtml(await res.text());
+          pageCount += 1;
+          const name = `${String(pageCount).padStart(2, '0')}-${new URL(req.url()).pathname.replace(/[^\w]+/g, '_').slice(1, 60)}.html`;
+          fs.writeFileSync(path.join(OUT, 'paginas', name), html);
+          body = `[página HTML salva em paginas/${name}]`;
+        } catch { /* redirecionamento sem corpo */ }
+      }
     }
     records.push({
       quando: new Date().toISOString(), tipo: kind, metodo: req.method(), url: redactUrl(req.url()), status: res.status(),
@@ -150,10 +171,10 @@ const ask = (q) => new Promise((resolve) => {
   console.log('==============================================================');
   console.log(' Na janela do navegador que abriu:');
   console.log('  1) Entre com o código da empresa, usuário e senha.');
-  console.log('  2) Abra o RELATÓRIO DE VENDAS POR PRODUTO de um dia (ontem, por exemplo).');
-  console.log('     Se houver, exporte para Excel/CSV.');
-  console.log('  3) Troque para a OUTRA LOJA e repita o passo 2.');
-  console.log('  4) Se der, abra também as vendas por FORMA DE PAGAMENTO e o ESTOQUE.');
+  console.log('  2) Abra o RELATÓRIO DE VENDAS POR PRODUTO de ontem (agrupado por dia) e clique em filtrar.');
+  console.log('  3) No mesmo dia, abra as vendas por FORMA DE PAGAMENTO.');
+  console.log('  4) Troque para a OUTRA LOJA e repita os passos 2 e 3.');
+  console.log('     (Não precisa exportar nada: o gravador guarda as páginas.)');
   console.log('  5) Volte para esta janela preta e aperte ENTER.');
   console.log('');
   console.log(' A sua senha, o usuário, cookies e tokens NÃO são guardados.');
