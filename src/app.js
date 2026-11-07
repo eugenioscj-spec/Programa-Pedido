@@ -19,6 +19,7 @@ const { createReceivables } = require('./receivables');
 const { createCashflow } = require('./cashflow');
 const { orderPdf } = require('./pdf');
 const { createCrm } = require('./crm');
+const { createAnalytics } = require('./analytics');
 const T = require('./time');
 const U = require('./util');
 
@@ -81,6 +82,7 @@ function createApp(db, { testMode = false } = {}) {
   const receivables = createReceivables(db);
   const cashflow = createCashflow(db, accounts, recurring);
   const crm = createCrm(db);
+  const analytics = createAnalytics(db, reports);
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -920,6 +922,12 @@ function createApp(db, { testMode = false } = {}) {
     const id = idParam(req);
     inv.editOrderItems({ orderId: id, changes: req.body?.changes || [] });
     res.json({ order: loadOrder(id) });
+  });
+
+  // ---------- admin: análises do negócio ----------
+  admin.get('/analises', (req, res) => {
+    const { from, to } = reportParams(req.query);
+    res.json(analytics.overview(from, to));
   });
 
   // ---------- admin: CRM (visitas e contatos) ----------

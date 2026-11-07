@@ -134,6 +134,16 @@ function createFinance(db, reports, { bankOpening = () => 0 } = {}) {
       pctRow[m] = rl ? ll / rl : null;
     }
 
+    // A.V.%: cada linha principal (não as de detalhe) em % da receita líquida da mesma coluna.
+    const avRows = rows.filter((r) => r._class !== 'sub').map((r) => {
+      const out = { line: r.line.trim(), _class: r._class };
+      for (const m of [...months, 'total']) {
+        const rl = m === 'total' ? sum(receitaLiquida) : receitaLiquida[m] || 0;
+        out[m] = rl ? r[m] / rl : null;
+      }
+      return out;
+    });
+
     const warnings = [];
     if (uncosted) warnings.push('Há movimentações de produtos sem custo no período: o custo delas entra como zero. Informe o custo inicial em Estoque.');
     warnings.push('“Mercadoria enviada às lojas” é a aproximação do CMV das lojas enquanto as vendas do balcão não vêm do PDV. Lance as vendas das lojas em Financeiro (contas “Vendas Loja…”).');
@@ -146,6 +156,7 @@ function createFinance(db, reports, { bankOpening = () => 0 } = {}) {
       warnings,
       sections: [
         { title: 'Demonstração do resultado', columns, rows },
+        { title: 'Análise vertical (A.V.%: cada linha em % da receita líquida)', columns: [{ key: 'line', label: '', type: 'text' }, ...months.map((m) => ({ key: m, label: monthLabel(m), type: 'pct' })), { key: 'total', label: 'Total', type: 'pct' }], rows: avRows },
         { title: 'Indicadores', columns: [{ key: 'line', label: '', type: 'text' }, ...months.map((m) => ({ key: m, label: monthLabel(m), type: 'pct' })), { key: 'total', label: 'Total', type: 'pct' }], rows: [pctRow] },
       ],
       result: { receita_liquida: sum(receitaLiquida), lucro_bruto: sum(lucroBruto), resultado_liquido: sum(liquido) },

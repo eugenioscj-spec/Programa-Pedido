@@ -26,6 +26,16 @@ O master cria os usuários em **Config. → Usuários do painel** (perfil Loja e
 - **Linhas liberadas:** em **Clientes → Editar**, o master escolhe o que cada cliente pode ver e pedir. Tipo inteiro marcado inclui as linhas que forem cadastradas depois; tudo marcado = sem restrição. O servidor também recusa pedido de produto fora das linhas liberadas.
 - **Favoritos:** o cliente toca na ☆ do produto e ele aparece na aba **★ Favoritos**, para pedir mais rápido.
 
+## Análises (só master)
+
+Primeira etapa das análises do negócio, no padrão da consultoria (comparação com o período anterior e análise vertical):
+
+- **Indicadores do período × período anterior** (mês cheio compara com o mês anterior cheio): receita B2B, margem bruta (R$ e %), pedidos, ticket médio, clientes que compraram, perdas (% de tudo o que saiu da câmara), estoque a custo e por quantos dias ele dura, contas a receber (vencido) e prazo médio real de recebimento.
+- **Evolução dos últimos 6 meses**, **margem por tipo e por linha**, **curva ABC de produtos** (pela margem) e **de clientes** (pela receita).
+- **DRE com A.V.%**: cada linha principal em % da receita líquida.
+
+Por enquanto só as vendas B2B entram; as vendas das lojas entram com a integração do CPlug.
+
 ## Pedidos: PDF e exclusão
 
 - **PDF do pedido:** ao enviar o pedido o cliente baixa o PDF (dados dele, itens, total, observações); também em **Meus pedidos** e, no painel, no detalhe do pedido. Documento de conferência, sem valor fiscal.

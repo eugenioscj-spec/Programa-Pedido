@@ -86,6 +86,7 @@ function setView(view) {
     produtos: renderProducts,
     clientes: renderCustomers,
     crm: renderCrm,
+    analises: renderAnalytics,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
@@ -1680,6 +1681,84 @@ async function renderRestock() {
     toast('Reposição registrada!', 'ok');
     restockLines = [];
     renderRestock();
+  }));
+}
+
+// ======================= ANÁLISES =======================
+const AN = { from: null, to: null };
+async function renderAnalytics() {
+  if (!AN.from) [AN.from, AN.to] = monthRange(0);
+  const d = await api(`/api/admin/analises?from=${AN.from}&to=${AN.to}`);
+  const c = d.current;
+  const p = d.previous;
+  // variação contra o período anterior; good = 'up' quando subir é bom
+  const delta = (cur, prev, good = 'up', isPct = false) => {
+    if (cur === null || prev === null || prev === undefined) return '<span class="muted">sem comparação</span>';
+    const diff = isPct ? cur - prev : (prev ? (cur - prev) / Math.abs(prev) : null);
+    if (diff === null) return '<span class="muted">sem base anterior</span>';
+    if (Math.abs(diff) < 0.0005) return '<span class="muted">= igual ao anterior</span>';
+    const up = diff > 0;
+    const cls = (up && good === 'up') || (!up && good === 'down') ? 'qty-pos' : 'qty-neg';
+    const txt = isPct ? `${(Math.abs(diff) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} p.p.` : pct(Math.abs(diff));
+    return `<span class="${cls}">${up ? '▲' : '▼'} ${txt}</span> <span class="muted">vs anterior</span>`;
+  };
+  const card = (label, value, sub) => `<div class="card stat"><div class="label">${label}</div><div class="value">${value}</div><div class="small">${sub}</div></div>`;
+  const tag = (cls) => `<span class="tag ${cls === 'A' ? 'tag-entregue' : cls === 'B' ? 'tag-confirmado' : 'tag-cancelado'}">${cls}</span>`;
+  const table = (head, rows, empty) => `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${rows || `<tr><td colspan="9" class="empty">${empty}</td></tr>`}</tbody></table></div>`;
+  const pp = (v) => (v === null ? '—' : pct(v));
+  const box = (title, sub, body) => `<div class="card" style="padding:0"><div style="padding:14px 14px 0"><h2 style="margin:0">${title}</h2>${sub ? `<p class="small muted">${sub}</p>` : ''}</div>${body}</div>`;
+  const moneyRows = (list) => list.map((t) => `<tr><td>${esc(t.label)}</td><td class="num">${money(t.revenue)}</td><td class="num">${money(t.margin)}</td><td class="num">${pp(t.margin_pct)}</td></tr>`).join('');
+  app.innerHTML = `
+    <div class="section-head"><h1>Análises</h1><span class="spacer"></span></div>
+    <form class="card" id="an-filter"><div class="row">
+      <div class="field"><label>De</label><input type="date" id="an-from" value="${AN.from}"></div>
+      <div class="field"><label>Até</label><input type="date" id="an-to" value="${AN.to}"></div>
+      <div class="field"><label>&nbsp;</label><div class="row">
+        <button type="button" class="btn-secondary btn-sm" data-an="0">Este mês</button>
+        <button type="button" class="btn-secondary btn-sm" data-an="-1">Mês passado</button>
+        <button type="button" class="btn-secondary btn-sm" data-an="3m">Últimos 3 meses</button>
+        <button type="button" class="btn-secondary btn-sm" data-an="year">Este ano</button></div></div>
+      <span class="grow"></span><div class="field"><label>&nbsp;</label><button type="submit">Atualizar</button></div>
+    </div><p class="small muted" style="margin:0">Comparado com ${fmtDate(d.prev_from, false)} a ${fmtDate(d.prev_to, false)}.</p></form>
+    ${d.warnings.map((w) => `<div class="alert alert-info small">${esc(w)}</div>`).join('')}
+    <div class="grid grid-4" style="margin-bottom:14px">
+      ${card('Receita B2B', money(c.revenue), delta(c.revenue, p.revenue))}
+      ${card('Margem bruta', `${money(c.margin)} <span class="small muted">${pp(c.margin_pct)}</span>`, delta(c.margin_pct, p.margin_pct, 'up', true))}
+      ${card('Pedidos', c.orders, delta(c.orders, p.orders))}
+      ${card('Ticket médio', c.ticket === null ? '—' : money(c.ticket), delta(c.ticket, p.ticket))}
+      ${card('Clientes que compraram', c.buyers, delta(c.buyers, p.buyers))}
+      ${card('Perdas (a custo)', `${money(c.losses)} <span class="small muted">${pp(c.losses_pct)}</span>`, `${delta(c.losses, p.losses, 'down')}<div class="muted">% de tudo o que saiu da câmara</div>`)}
+      ${card('Estoque a custo hoje', money(d.stock.value), d.stock.days_cover === null ? '<span class="muted">sem saídas no período</span>' : `dura cerca de <strong>${d.stock.days_cover} dias</strong> no ritmo do período`)}
+      ${card('A receber dos pedidos', money(d.receivables.open), d.receivables.late ? `<span class="qty-neg">${money(d.receivables.late)} vencido (${d.receivables.late_count})</span>` : '<span class="muted">nada vencido</span>')}
+      ${card('Prazo médio de recebimento', d.receivables.avg_days === null ? '—' : `${d.receivables.avg_days} dias`, `<span class="muted">${d.receivables.paid_count} pedido(s) recebido(s) no período</span>`)}
+    </div>
+    <div style="margin-bottom:14px">${box('Evolução — últimos 6 meses', '',
+      table('<th>Mês</th><th class="num">Receita</th><th class="num">Margem</th><th class="num">Margem %</th><th class="num">Pedidos</th><th class="num">Ticket</th><th class="num">Clientes</th><th class="num">Perdas</th>',
+        d.months.map((m) => `<tr><td>${m.month.slice(5)}/${m.month.slice(0, 4)}</td><td class="num">${money(m.revenue)}</td><td class="num">${money(m.margin)}</td>
+          <td class="num">${pp(m.margin_pct)}</td><td class="num">${m.orders}</td><td class="num">${m.ticket === null ? '—' : money(m.ticket)}</td>
+          <td class="num">${m.buyers}</td><td class="num">${money(m.losses)}</td></tr>`).join(''), ''))}</div>
+    <div class="grid grid-2" style="margin-bottom:14px">
+      ${box('Por tipo de produto', '', table('<th>Tipo</th><th class="num">Receita</th><th class="num">Margem</th><th class="num">Margem %</th>', moneyRows(d.types), 'Sem vendas no período.'))}
+      ${box('Por linha (maior margem primeiro)', '', table('<th>Linha</th><th class="num">Receita</th><th class="num">Margem</th><th class="num">Margem %</th>', moneyRows(d.lines), 'Sem vendas no período.'))}
+    </div>
+    <div class="grid grid-2">
+      ${box('Curva ABC de produtos (pela margem)', 'A = os que fazem 80% da margem; B = os próximos 15%; C = o resto.',
+        table('<th></th><th>Produto</th><th class="num">Margem</th><th class="num">% da margem</th><th class="num">Margem %</th>',
+          d.products.map((r) => `<tr><td>${tag(r.cls)}</td><td>${esc(r.label)}<div class="small muted">${r.units} un · ${money(r.revenue)}</div></td>
+            <td class="num">${money(r.margin)}</td><td class="num">${pp(r.share)}</td><td class="num">${pp(r.margin_pct)}</td></tr>`).join(''), 'Sem vendas no período.'))}
+      ${box('Curva ABC de clientes (pela receita)', 'Quem são os clientes que sustentam as vendas.',
+        table('<th></th><th>Cliente</th><th class="num">Receita</th><th class="num">% da receita</th><th class="num">Pedidos</th><th class="num">Margem %</th>',
+          d.customers.map((r) => `<tr><td>${tag(r.cls)}</td><td>${esc(r.label)}</td><td class="num">${money(r.revenue)}</td><td class="num">${pp(r.share)}</td>
+            <td class="num">${r.orders}</td><td class="num">${pp(r.margin_pct)}</td></tr>`).join(''), 'Sem vendas no período.'))}
+    </div>`;
+  $('#an-filter').addEventListener('submit', (e) => { e.preventDefault(); AN.from = $('#an-from').value; AN.to = $('#an-to').value; guard(renderAnalytics); });
+  $$('[data-an]').forEach((b) => b.addEventListener('click', () => {
+    const v = b.dataset.an;
+    const today = todayLocal();
+    if (v === 'year') [AN.from, AN.to] = [`${today.slice(0, 4)}-01-01`, today];
+    else if (v === '3m') [AN.from, AN.to] = [monthRange(-2)[0], today];
+    else [AN.from, AN.to] = monthRange(Number(v));
+    guard(renderAnalytics);
   }));
 }
 

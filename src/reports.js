@@ -29,7 +29,7 @@ function createReports(db) {
   const MOV_SELECT = `
     SELECT m.*, CASE WHEN m.type = 'estorno' AND o.type IS NOT NULL THEN o.type ELSE m.type END AS eff_type,
       ${T.sqlLocalMonth('m.created_at')} AS month, ${T.sqlLocalDate('m.created_at')} AS local_date,
-      p.name AS product_name, p.category, p.units_per_box AS upb,
+      p.name AS product_name, p.category, p.product_type, p.units_per_box AS upb,
       l.name AS location_name, r.name AS reason_name, nt.label AS subtype_label,
       c.razao_social, c.nome_fantasia
     FROM stock_movements m
