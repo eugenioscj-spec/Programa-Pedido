@@ -51,13 +51,34 @@ function redactUrl(u) {
 }
 const cleanHeaders = (h) => Object.fromEntries(Object.entries(h || {}).map(([k, v]) => [k, SECRET_KEY.test(k) ? '***' : v]));
 
+// Procura o Chrome/Edge do computador em todos os lugares comuns do Windows (inclusive o Chrome
+// instalado só para o usuário, em AppData). Se nenhum servir, usa o navegador baixado pelo Playwright.
+function browserPaths() {
+  const env = process.env;
+  const roots = [env.PROGRAMFILES, env['PROGRAMFILES(X86)'], env.LOCALAPPDATA, 'C:\\Program Files', 'C:\\Program Files (x86)'].filter(Boolean);
+  const rel = ['Google\\Chrome\\Application\\chrome.exe', 'Microsoft\\Edge\\Application\\msedge.exe'];
+  const list = [];
+  for (const r of roots) for (const x of rel) list.push(path.join(r, x));
+  return [...new Set(list)].filter((f) => { try { return fs.existsSync(f); } catch { return false; } });
+}
+
 async function launch(chromium) {
-  for (const channel of ['chrome', 'msedge']) {
+  const tries = [
+    ...browserPaths().map((executablePath) => ({ label: executablePath, opts: { executablePath } })),
+    { label: 'Chrome (canal)', opts: { channel: 'chrome' } },
+    { label: 'Edge (canal)', opts: { channel: 'msedge' } },
+    { label: 'navegador do Playwright', opts: {} },
+  ];
+  for (const t of tries) {
     try {
-      return await chromium.launch({ channel, headless: false });
-    } catch { /* tenta o próximo */ }
+      const b = await chromium.launch({ ...t.opts, headless: false });
+      console.log(`Navegador aberto: ${t.label}`);
+      return b;
+    } catch (e) {
+      console.log(`Não abriu (${t.label}): ${String(e.message).split('\n')[0]}`);
+    }
   }
-  return chromium.launch({ headless: false }); // navegador do Playwright, se estiver instalado
+  return null;
 }
 
 const ask = (q) => new Promise((resolve) => {
@@ -76,6 +97,11 @@ const ask = (q) => new Promise((resolve) => {
   fs.mkdirSync(path.join(OUT, 'arquivos'), { recursive: true });
   const records = [];
   const browser = await launch(chromium);
+  if (!browser) {
+    console.log('');
+    console.log('Nenhum navegador abriu. Rode de novo o "Gravar passos do CPlug.bat": ele vai baixar um navegador só para a gravação.');
+    process.exit(2);
+  }
   const context = await browser.newContext({ acceptDownloads: true, locale: 'pt-BR' });
   const page = await context.newPage();
 
