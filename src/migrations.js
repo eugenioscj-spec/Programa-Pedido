@@ -672,6 +672,26 @@ const MIGRATIONS = [
       db.prepare("INSERT INTO settings (key, value) VALUES ('pending_inventory', '2026-11-13') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     },
   },
+  {
+    version: 13,
+    name: 'Picolé Top Hit de Hawkins: 33 unidades por caixa',
+    up(db) {
+      const p = db.prepare("SELECT * FROM products WHERE sku = 'OG26-NETFLIX-TOP-HIT'").get();
+      if (!p || p.units_per_box === 33) return;
+      // preço da caixa calculado (unidade × quantidade) acompanha; preço de caixa digitado à mão fica
+      const boxDerived = p.box_price_cents === p.unit_price_cents * p.units_per_box;
+      db.prepare("UPDATE products SET units_per_box = 33, box_price_cents = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(boxDerived ? p.unit_price_cents * 33 : p.box_price_cents, p.id);
+      // O inventário de 13/11 já entrou com 39 por caixa (6 cx = 234 un): corrige para 6 × 33 = 198 un.
+      const movs = db.prepare('SELECT * FROM stock_movements WHERE product_id = ?').all(p.id);
+      if (p.units_per_box === 39 && p.stock_units === 234 && !p.has_cost && movs.length === 1 && movs[0].type === 'sobra_inventario') {
+        db.prepare('UPDATE products SET stock_units = 198 WHERE id = ?').run(p.id);
+        db.prepare(`INSERT INTO stock_movements (product_id, type, quantity, balance_after, note, created_by)
+          VALUES (?, 'divergencia_inventario', -36, 198, ?, 'Inventário')`)
+          .run(p.id, 'Correção do inventário de 13/11: a caixa do Top Hit tem 33 un (6 cx = 198 un)');
+      }
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
