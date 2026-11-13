@@ -180,3 +180,27 @@ test('migração 7: corrige o CNPJ da Loja 2 mantendo a senha', () => {
   db.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('migração 12: apaga pedidos e histórico do estoque; inventário de 13/11 entra uma vez, em caixas', () => {
+  const { applyPendingInventory, INVENTORY_2026_11_13 } = require('../src/migrations');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oggi-mig12-'));
+  const file = path.join(dir, 'oggi.db');
+  const old = openDatabase(file, { log: () => {}, upTo: 11 });
+  seedTestData(old, { log: () => {} });
+  const customers = old.prepare('SELECT COUNT(*) n FROM customers').get().n;
+  old.close();
+
+  const db = openDatabase(file, { log: () => {} });
+  assert.deepEqual(db.prepare('SELECT (SELECT COUNT(*) FROM orders) o, (SELECT COUNT(*) FROM stock_movements) m, (SELECT COUNT(*) FROM fin_entries WHERE order_id IS NOT NULL) r').get(), { o: 0, m: 0, r: 0 });
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM customers').get().n, customers, 'clientes ficam');
+  const r = applyPendingInventory(db, { log: () => {} });
+  assert.equal(r.products, INVENTORY_2026_11_13.length);
+  assert.equal(INVENTORY_2026_11_13.reduce((s, [, cx]) => s + cx, 0), 880);
+  const abacaxi = db.prepare("SELECT * FROM products WHERE sku = 'OG26-FRUTOS-ABACAXI'").get();
+  assert.deepEqual([abacaxi.stock_units, abacaxi.has_cost], [8 * 39, 0]);
+  assert.equal(db.prepare("SELECT stock_units FROM products WHERE sku = 'OG26-ACAI-200-BANANA'").get().stock_units, 0);
+  assert.equal(applyPendingInventory(db, { log: () => {} }), null, 'só uma vez');
+  assert.throws(() => db.prepare('DELETE FROM stock_movements').run(), /não podem ser apagadas/);
+  db.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -105,6 +105,82 @@ const DISNEY_NAMES = [
   ['disney-iogurte-frutas-vermelhas', 'Picolé Disney Iogurte de Frutas Vermelhas', 'Picolé Disney Spider-Gwen Iogurte de Frutas Vermelhas'],
 ];
 
+// Inventário físico da câmara em 13/11/2026, em CAIXAS fechadas (folhas de contagem conferidas pelo dono).
+// Produto que não está aqui ficou com zero.
+const INVENTORY_2026_11_13 = [
+  ['OG26-REGIONAIS-CAJA', 6], // Picolé Regionais Cajá
+  ['OG26-REGIONAIS-CAJU', 6], // Picolé Regionais Caju
+  ['OG26-REGIONAIS-GRAVIOLA', 8], // Picolé Regionais Graviola
+  ['OG26-REGIONAIS-CUPUACU', 15], // Picolé Regionais Cupuaçu
+  ['OG26-REGIONAIS-TAPIOCA', 12], // Picolé Regionais Tapioca
+  ['OG26-FAZENDA-AMENDOIM', 11], // Picolé Fazenda Amendoim
+  ['OG26-FAZENDA-COCO', 11], // Picolé Fazenda Coco
+  ['OG26-FAZENDA-COCO-QUEIMADO', 11], // Picolé Fazenda Coco Queimado
+  ['OG26-FAZENDA-DOCE-DE-LEITE', 13], // Picolé Fazenda Doce de Leite
+  ['OG26-FAZENDA-MILHO-VERDE', 14], // Picolé Fazenda Milho Verde
+  ['OG26-DELICIA-ABACAXI-VINHO', 15], // Picolé Delícia Abacaxi ao Vinho
+  ['OG26-DELICIA-BEIJINHO', 14], // Picolé Delícia Beijinho
+  ['OG26-DELICIA-CHOCOLATE', 13], // Picolé Delícia Chocolate
+  ['OG26-DELICIA-IOGURTE-FRUTAS-VERMELHAS', 15], // Picolé Delícia Iogurte com Frutas Vermelhas
+  ['OG26-DELICIA-MOUSSE-MARACUJA', 13], // Picolé Delícia Mousse de Maracujá
+  ['OG26-DELICIA-QUEIJO-GOIABADA', 18], // Picolé Delícia Queijo com Goiabada
+  ['OG26-DELICIA-TORTA-LIMAO', 17], // Picolé Delícia Torta de Limão
+  ['OG26-SELECOES-CARIOCA', 4], // Pote Seleções Carioca
+  ['OG26-SELECOES-CHOCOLATE', 9], // Pote Seleções Chocolate
+  ['OG26-SELECOES-PASSAS-RUM', 6], // Pote Seleções Passas ao Rum
+  ['OG26-SELECOES-FLOCOS', 4], // Pote Seleções Flocos
+  ['OG26-FESTA-POTE-TRIO-YOGO', 12], // Pote Festa Trio Yogo
+  ['OG26-NETFLIX-MUNDO-INVERTIDO', 6], // Picolé Chocolate do Mundo Invertido
+  ['OG26-NETFLIX-DEMOGORGON', 8], // Picolé Demogorgon Freeze
+  ['OG26-NETFLIX-TOP-HIT', 6], // Picolé Top Hit de Hawkins
+  ['OG26-TRADICIONAIS-NAPOLITANO', 8], // Pote Tradicionais Napolitano
+  ['OG26-DISNEY-LEITE-CACAU', 9], // Picolé Disney Mickey Leite com Cacau
+  ['OG26-DISNEY-UVA', 12], // Picolé Disney Ariel Uva Roxa
+  ['OG26-DISNEY-MORANGO-BAUNILHA', 4], // Picolé Disney Jessie Leite com Morango e Baunilha
+  ['OG26-DISNEY-IOGURTE-MORANGO', 8], // Picolé Disney Homem-Aranha Iogurte de Morango
+  ['OG26-DISNEY-IOGURTE-FRUTAS-VERMELHAS', 13], // Picolé Disney Spider-Gwen Iogurte de Frutas Vermelhas
+  ['OG26-HK-TUTTI-FRUTTI', 16], // Picolé Hello Kitty Tutti-Frutti
+  ['OG26-HK-PINTA-LINGUA', 16], // Picolé Hello Kitty Pinta-Língua
+  ['OG26-FESTA-FRUTAS-VERMELHAS', 36], // Picolé Festa Frutas Vermelhas
+  ['OG26-FESTA-MELANCIA', 30], // Picolé Festa Melancia
+  ['OG26-FESTA-GROSELHA', 29], // Picolé Festa Groselha
+  ['OG26-FESTA-ACHOCOLATADO', 28], // Picolé Festa Achocolatado
+  ['OG26-FESTA-IOGURTE', 33], // Picolé Festa Iogurte
+  ['OG26-FESTA-LEITE-CONDENSADO', 28], // Picolé Festa Leite Condensado
+  ['OG26-ZERO-ACAI', 5], // Picolé Zero Açaí
+  ['OG26-ZERO-AMENDOIM', 8], // Picolé Zero Amendoim
+  ['OG26-ZERO-CHOCOLATE', 7], // Picolé Zero Chocolate
+  ['OG26-ZERO-COCO', 6], // Picolé Zero Coco
+  ['OG26-ZERO-LIMAO', 14], // Picolé Zero Limão
+  ['OG26-ZERO-MILHO', 6], // Picolé Zero Milho Verde
+  ['OG26-FRUTOS-ABACAXI', 8], // Picolé Frutos Abacaxi
+  ['OG26-FRUTOS-ACAI', 16], // Picolé Frutos Açaí
+  ['OG26-FRUTOS-GOIABA', 7], // Picolé Frutos Goiaba
+  ['OG26-FRUTOS-LIMAO', 18], // Picolé Frutos Limão
+  ['OG26-FRUTOS-MANGA', 8], // Picolé Frutos Manga
+  ['OG26-FRUTOS-MORANGO', 20], // Picolé Frutos Morango
+  ['OG26-FRUTOS-UVA', 16], // Picolé Frutos Uva
+  ['OG26-CLASSICOS-BOMBOM', 24], // Picolé Clássicos Bombom no Palito
+  ['OG26-CLASSICOS-BRIGADEIRO', 24], // Picolé Clássicos Brigadeiro
+  ['OG26-SENSA-BRIGADEIRO', 10], // Picolé Sensa Brigadeiro
+  ['OG26-SENSA-CHOCO-AMENDOIM', 16], // Picolé Sensa Choco Amendoim
+  ['OG26-SENSA-CHOCOLATE-BRANCO', 13], // Picolé Sensa Chocolate Branco
+  ['OG26-SENSA-CHOCO-MENTA', 14], // Picolé Sensa Choco Menta
+  ['OG26-SENSA-CLASSICO', 13], // Picolé Sensa Clássico
+  ['OG26-SENSA-FRUTAS-VERMELHAS', 8], // Picolé Sensa Frutas Vermelhas
+  ['OG26-SENSA-MEIO-AMARGO', 9], // Picolé Sensa Meio Amargo
+  ['OG26-SUNDAE-MORANGO', 8], // Top Sundae Morango
+  ['OG26-SUNDAE-CHOCOLATE', 8], // Top Sundae Chocolate
+  ['OG26-SENSA-BOMBOM-CLASSICO', 4], // Sensa Bombom Clássico
+  ['OG26-GIRATTO-AVELA-TRUFADO', 12], // Cone Giratto Avelã Trufado
+  ['OG26-GIRATTO-CROCANTE', 6], // Cone Giratto Crocante
+  ['OG26-GIRATTO-LEITE-TRUFADO', 8], // Cone Giratto Leite Trufado
+  ['OG26-DUETTO-CHOCOLATE-TRUFA', 3], // Pote Duetto Chocolate com Trufa
+  ['OG26-DUETTO-FRUTAS-VERMELHAS', 4], // Pote Duetto Frutas Vermelhas
+  ['OG26-DUETTO-LEITINHO-TRUFADO', 12], // Pote Duetto Leitinho Trufado
+  ['OG26-DUETTO-MOUSSE-MARACUJA', 8], // Pote Duetto Mousse de Maracujá
+];
+
 const MIGRATIONS = [
   {
     version: 2,
@@ -573,6 +649,29 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 12,
+    name: 'Novo começo do estoque: apaga pedidos e histórico do estoque; inventário de 13/11/2026 (aplicado ao iniciar)',
+    up(db) {
+      // Contas a receber dos pedidos: desfaz a conciliação com o banco e apaga.
+      const entries = db.prepare('SELECT id FROM fin_entries WHERE order_id IS NOT NULL').all().map((r) => r.id);
+      for (const id of entries) {
+        db.prepare("UPDATE bank_transactions SET status = 'pendente', entry_id = NULL, link_type = NULL, note = NULL WHERE entry_id = ?").run(id);
+      }
+      db.prepare('DELETE FROM fin_entries WHERE order_id IS NOT NULL').run();
+      // Pedidos e todo o histórico do estoque. Clientes, produtos, CRM e o resto do Financeiro ficam.
+      db.exec('DROP TRIGGER IF EXISTS mov_no_delete');
+      db.exec('DELETE FROM stock_movements');
+      db.exec(MOV_DELETE_GUARD);
+      db.exec('DELETE FROM order_items; DELETE FROM orders;');
+      db.exec('UPDATE products SET stock_units = 0, stock_value_cents = 0, has_cost = 0');
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").get()) {
+        db.exec("DELETE FROM sqlite_sequence WHERE name IN ('stock_movements', 'orders', 'order_items')");
+      }
+      // A contagem entra logo depois de o sistema iniciar (applyPendingInventory), já com os produtos carregados.
+      db.prepare("INSERT INTO settings (key, value) VALUES ('pending_inventory', '2026-11-13') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -587,6 +686,35 @@ function hasData(db) {
 }
 
 // upTo: para os testes pararem numa versão intermediária.
+// Lança o inventário pendente (migração 12) quando os produtos já existem: estoque sem custo, em
+// unidades = caixas × unidades por caixa do cadastro. Roda uma vez; o custo é informado depois em Estoque.
+function applyPendingInventory(db, { log = console.log } = {}) {
+  const pending = db.prepare("SELECT value FROM settings WHERE key = 'pending_inventory'").get();
+  if (!pending || pending.value !== '2026-11-13') return null;
+  if (!db.prepare('SELECT COUNT(*) n FROM products').get().n) return null;
+  const at = '2026-11-13 16:00:00'; // 12h em Cuiabá
+  const note = 'Inventário de 13/11/2026 (contagem física da câmara, em caixas)';
+  let products = 0;
+  let units = 0;
+  const missing = [];
+  db.transaction(() => {
+    for (const [sku, boxes] of INVENTORY_2026_11_13) {
+      const p = db.prepare('SELECT * FROM products WHERE sku = ?').get(sku);
+      if (!p) { missing.push(sku); continue; }
+      if (p.stock_units !== 0) continue;
+      const qty = boxes * p.units_per_box;
+      db.prepare('UPDATE products SET stock_units = ?, stock_value_cents = 0, has_cost = 0 WHERE id = ?').run(qty, p.id);
+      db.prepare(`INSERT INTO stock_movements (product_id, type, quantity, balance_after, note, created_by, created_at)
+        VALUES (?, 'sobra_inventario', ?, ?, ?, 'Inventário', ?)`).run(p.id, qty, qty, note, at);
+      products += 1;
+      units += qty;
+    }
+    db.prepare("DELETE FROM settings WHERE key = 'pending_inventory'").run();
+  })();
+  log(`Inventário de 13/11/2026 lançado: ${products} produto(s), ${units} unidades.${missing.length ? ` Sem cadastro: ${missing.join(', ')}` : ''}`);
+  return { products, units, missing };
+}
+
 function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = {}) {
   let version = currentVersion(db);
   const pending = MIGRATIONS.filter((m) => m.version > version && m.version <= upTo);
@@ -622,4 +750,4 @@ function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = 
   return { from, to: version, backup };
 }
 
-module.exports = { runMigrations, LATEST_VERSION, LOJA2, TEST_BARCODES, ORDER_DELETER_EMAIL, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
+module.exports = { runMigrations, applyPendingInventory, INVENTORY_2026_11_13, LATEST_VERSION, LOJA2, TEST_BARCODES, ORDER_DELETER_EMAIL, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
