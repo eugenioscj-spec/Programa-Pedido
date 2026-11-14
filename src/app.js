@@ -21,6 +21,7 @@ const { orderPdf } = require('./pdf');
 const { createCrm } = require('./crm');
 const { createAnalytics } = require('./analytics');
 const cplug = require('./cplug');
+const rede = require('./rede');
 const T = require('./time');
 const U = require('./util');
 
@@ -951,6 +952,29 @@ function createApp(db, { testMode = false } = {}) {
     if (!cplugLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-cplug-${cplugLast.date}.json`);
     res.type('application/json').send(JSON.stringify(cplugLast, null, 1));
+  });
+
+  // ---------- admin: integração com a Rede (maquininhas) — teste ----------
+  let redeLast = null;
+  admin.get('/integracoes/rede', (req, res) => {
+    const c = rede.config();
+    res.json({
+      configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret }, ambiente: c.ambiente,
+      pvs: c.ambiente === 'sandbox' ? rede.SANDBOX_PVS : c.pvs,
+      last: redeLast && { ...redeLast, log: undefined },
+    });
+  });
+  admin.post('/integracoes/rede/testar', async (req, res) => {
+    const date = T.isDate(String(req.body?.date || '')) ? String(req.body.date) : T.localDate();
+    const pv = String(req.body?.pv || '').replace(/\D/g, '');
+    if (!pv) throw new BusinessError('Informe o número do estabelecimento (PV).');
+    redeLast = await rede.fetchSales({ date, pv });
+    res.json({ ...redeLast, log: undefined, sales: undefined, sample: redeLast.sales.slice(0, 3) });
+  });
+  admin.get('/integracoes/rede/diagnostico', (req, res) => {
+    if (!redeLast) throw new BusinessError('Faça um teste de conexão antes.');
+    res.attachment(`diagnostico-rede-${redeLast.date}.json`);
+    res.type('application/json').send(JSON.stringify(redeLast, null, 1));
   });
 
   // ---------- admin: análises do negócio ----------

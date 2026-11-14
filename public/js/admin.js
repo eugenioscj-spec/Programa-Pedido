@@ -1709,7 +1709,9 @@ async function renderIntegrations() {
       </div>
       <p class="small muted" style="margin:0">O diagnóstico traz as páginas que o sistema leu, sem senha, usuário nem códigos de segurança. Se algo não aparecer certo, mande o arquivo para o Claude.</p>
     </div>
-    <div id="int-result">${r ? integrationResult(r) : ''}</div>`;
+    <div id="int-result">${r ? integrationResult(r) : ''}</div>
+    <div class="card" id="rede-card"><div class="empty">Carregando…</div></div>`;
+  renderRedeCard();
   $('#int-date').addEventListener('change', (e) => { INT.date = e.target.value; });
   const btn = $('#btn-int-test');
   btn.addEventListener('click', () => guard(async () => {
@@ -1722,6 +1724,60 @@ async function renderIntegrations() {
     }
     renderIntegrations();
   }));
+}
+
+// Rede (maquininhas): teste da API oficial de Gestão de Vendas.
+const RD = { date: null, pv: '', result: null };
+async function renderRedeCard() {
+  const box = $('#rede-card');
+  if (!box) return;
+  const st = await api('/api/admin/integracoes/rede');
+  if (!RD.date) RD.date = todayLocal();
+  if (!RD.pv && st.pvs.length) RD.pv = st.pvs[0];
+  const ok = st.configured.client_id && st.configured.client_secret;
+  const flag = (v, label) => `<li>${v ? '✅' : '❌'} <span class="mono">${label}</span> ${v ? 'preenchida' : '<strong>faltando</strong>'}</li>`;
+  const r = RD.result || st.last;
+  box.innerHTML = `
+    <h2 style="margin-top:0">Rede (maquininhas de cartão)</h2>
+    <p class="small muted">API oficial de Gestão de Vendas da Rede. Ambiente atual: <strong>${st.ambiente === 'producao' ? 'produção (lojas reais)' : 'teste (sandbox, dados fictícios da Rede)'}</strong>.
+      Por enquanto é só um teste: nada é lançado.</p>
+    <ul class="small" style="padding-left:18px">${flag(st.configured.client_id, 'REDE_CLIENT_ID')}${flag(st.configured.client_secret, 'REDE_CLIENT_SECRET')}</ul>
+    <div class="row">
+      <div class="field"><label>Estabelecimento (PV)</label><input id="rd-pv" inputmode="numeric" value="${esc(RD.pv)}" list="rd-pvs" style="max-width:180px">
+        <datalist id="rd-pvs">${st.pvs.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></div>
+      <div class="field"><label>Dia</label><input type="date" id="rd-date" value="${RD.date}"></div>
+      <div class="field"><label>&nbsp;</label><button id="btn-rd-test" ${ok ? '' : 'disabled'}>Testar conexão com a Rede</button></div>
+      <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${r ? '' : 'hidden'}" href="/api/admin/integracoes/rede/diagnostico">Baixar diagnóstico</a></div>
+    </div>
+    ${st.ambiente === 'sandbox' ? '<p class="small muted" style="margin:0">No teste, use um dos PVs fictícios da Rede (13381369 ou 22523510) e um dia em que o ambiente de teste tenha vendas: se vier vazio, o diagnóstico mostra o que a Rede respondeu.</p>' : ''}
+    <div id="rd-result" style="margin-top:12px">${r ? redeResult(r) : ''}</div>`;
+  $('#rd-pv').addEventListener('change', (e) => { RD.pv = e.target.value; });
+  $('#rd-date').addEventListener('change', (e) => { RD.date = e.target.value; });
+  const btn = $('#btn-rd-test');
+  btn.addEventListener('click', () => guard(async () => {
+    btn.disabled = true;
+    btn.textContent = 'Consultando a Rede…';
+    try {
+      RD.result = await api('/api/admin/integracoes/rede/testar', { method: 'POST', body: { date: RD.date, pv: RD.pv } });
+    } finally {
+      btn.disabled = false;
+    }
+    renderRedeCard();
+  }));
+}
+
+function redeResult(r) {
+  if (r.error) return `<div class="alert alert-error"><strong>Não deu certo:</strong> ${esc(r.error)}</div>`;
+  const list = r.summary || [];
+  const byMod = {};
+  for (const s of list) { const k = s.modality || 'não informado'; byMod[k] = (byMod[k] || 0) + (s.gross_cents || 0); }
+  return `<div class="alert alert-ok small">Conexão com a Rede funcionou: ${list.length} venda(s) em ${fmtDate(r.date, false)} no PV ${esc(r.pv)} · total ${money(r.total_cents)}.</div>
+    ${list.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Bandeira</th><th>Modalidade</th><th class="num">Parc.</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th><th>Status</th></tr></thead><tbody>
+      ${list.slice(0, 50).map((s) => `<tr><td class="nowrap small">${esc(s.date || '')}</td><td>${esc(s.brand ?? '—')}</td><td>${esc(s.modality ?? '—')}</td><td class="num">${esc(s.installments ?? '—')}</td>
+        <td class="num">${s.gross_cents === null ? '—' : money(s.gross_cents)}</td><td class="num">${s.fee_cents === null ? '—' : money(s.fee_cents)}</td>
+        <td class="num">${s.net_cents === null ? '—' : money(s.net_cents)}</td><td class="small">${esc(s.status ?? '')}</td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="small muted">Por modalidade: ${Object.entries(byMod).map(([k, v]) => `${esc(k)} ${money(v)}`).join(' · ')}. Colunas com “—” ainda não foram reconhecidas: o diagnóstico mostra os nomes que a Rede usa.</p>` : ''}`;
 }
 
 function integrationResult(r) {

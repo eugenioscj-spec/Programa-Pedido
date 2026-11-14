@@ -48,6 +48,18 @@ Em **Integrações**, o sistema entra no CPlug com a conta cadastrada nas variá
 
 As credenciais nunca vão para o banco nem para a tela. O botão **Baixar diagnóstico** gera um arquivo com as páginas lidas (sem senha, usuário e códigos de segurança) para ajustar a leitura.
 
+## Integração com a Rede (maquininhas, em teste)
+
+API oficial **Gestão de Vendas** da Rede (vendas de crédito e débito, recebíveis, pagamentos). Em **Integrações → Rede**, o teste busca as vendas de um dia de um estabelecimento (PV).
+
+| Variável (Render → Environment) | O que colocar |
+|---|---|
+| `REDE_CLIENT_ID` / `REDE_CLIENT_SECRET` | As credenciais do projeto "Gestão de Vendas" no portal de desenvolvedores da Rede |
+| `REDE_AMBIENTE` | Vazio ou `sandbox` = teste (dados fictícios; PVs 13381369 e 22523510). `producao` quando a Rede liberar |
+| `REDE_PVS` | (produção) números dos estabelecimentos das lojas, separados por vírgula |
+
+Para produção, a Rede pede o cadastro por e-mail (ecommerce@userede.com.br) e certifica a integração no ambiente de teste antes de liberar.
+
 ## Pedidos: PDF e exclusão
 
 - **PDF do pedido:** ao enviar o pedido o cliente baixa o PDF (dados dele, itens, total, observações); também em **Meus pedidos** e, no painel, no detalhe do pedido. Documento de conferência, sem valor fiscal.
