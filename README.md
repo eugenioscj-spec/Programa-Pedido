@@ -36,6 +36,18 @@ Primeira etapa das análises do negócio, no padrão da consultoria (comparaçã
 
 Por enquanto só as vendas B2B entram; as vendas das lojas entram com a integração do CPlug.
 
+## Integração com o CPlug (em teste)
+
+Em **Integrações**, o sistema entra no CPlug com a conta cadastrada nas variáveis do servidor e lê as vendas de um dia de cada loja: **por produto** e **por forma de pagamento**. Por enquanto é só teste: nada é lançado.
+
+| Variável (Render → Environment) | O que colocar |
+|---|---|
+| `CPLUG_EMPRESA` | O "Código da Empresa" da tela de login do CPlug |
+| `CPLUG_USUARIO` | O usuário (de preferência um só para o robô, com permissão de relatórios) |
+| `CPLUG_SENHA` | A senha desse usuário |
+
+As credenciais nunca vão para o banco nem para a tela. O botão **Baixar diagnóstico** gera um arquivo com as páginas lidas (sem senha, usuário e códigos de segurança) para ajustar a leitura.
+
 ## Pedidos: PDF e exclusão
 
 - **PDF do pedido:** ao enviar o pedido o cliente baixa o PDF (dados dele, itens, total, observações); também em **Meus pedidos** e, no painel, no detalhe do pedido. Documento de conferência, sem valor fiscal.

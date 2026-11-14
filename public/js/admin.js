@@ -87,6 +87,7 @@ function setView(view) {
     clientes: renderCustomers,
     crm: renderCrm,
     analises: renderAnalytics,
+    integracoes: renderIntegrations,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
@@ -1682,6 +1683,74 @@ async function renderRestock() {
     restockLines = [];
     renderRestock();
   }));
+}
+
+// ======================= INTEGRAÇÕES (CPlug) =======================
+const INT = { date: null, result: null };
+async function renderIntegrations() {
+  if (!INT.date) INT.date = todayLocal();
+  const st = await api('/api/admin/integracoes/cplug');
+  const c = st.configured;
+  const ok = c.empresa && c.usuario && c.senha;
+  const flag = (v, label) => `<li>${v ? '✅' : '❌'} <span class="mono">${label}</span> ${v ? 'preenchida' : '<strong>faltando</strong>'}</li>`;
+  const r = INT.result || st.last;
+  app.innerHTML = `
+    <div class="section-head"><h1>Integrações</h1></div>
+    <div class="card">
+      <h2 style="margin-top:0">CPlug (vendas das lojas)</h2>
+      <p class="small muted">O sistema entra no CPlug com a conta cadastrada nas variáveis do Render e lê as vendas do dia de cada loja:
+        por produto e por forma de pagamento. Por enquanto é só um <strong>teste</strong>: nada é lançado no estoque nem no Financeiro.</p>
+      <ul class="small" style="padding-left:18px">${flag(c.empresa, 'CPLUG_EMPRESA')}${flag(c.usuario, 'CPLUG_USUARIO')}${flag(c.senha, 'CPLUG_SENHA')}</ul>
+      ${ok ? '' : '<div class="alert alert-warn small">Cadastre as três variáveis no Render (serviço → Environment) e espere o sistema atualizar.</div>'}
+      <div class="row">
+        <div class="field"><label>Dia</label><input type="date" id="int-date" value="${INT.date}"></div>
+        <div class="field"><label>&nbsp;</label><button id="btn-int-test" ${ok ? '' : 'disabled'}>Testar conexão e buscar vendas</button></div>
+        <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${r ? '' : 'hidden'}" href="/api/admin/integracoes/cplug/diagnostico">Baixar diagnóstico</a></div>
+      </div>
+      <p class="small muted" style="margin:0">O diagnóstico traz as páginas que o sistema leu, sem senha, usuário nem códigos de segurança. Se algo não aparecer certo, mande o arquivo para o Claude.</p>
+    </div>
+    <div id="int-result">${r ? integrationResult(r) : ''}</div>`;
+  $('#int-date').addEventListener('change', (e) => { INT.date = e.target.value; });
+  const btn = $('#btn-int-test');
+  btn.addEventListener('click', () => guard(async () => {
+    btn.disabled = true;
+    btn.textContent = 'Buscando no CPlug… (pode levar até 1 minuto)';
+    try {
+      INT.result = await api('/api/admin/integracoes/cplug/testar', { method: 'POST', body: { date: INT.date } });
+    } finally {
+      btn.disabled = false;
+    }
+    renderIntegrations();
+  }));
+}
+
+function integrationResult(r) {
+  if (r.error) return `<div class="alert alert-error"><strong>Não deu certo:</strong> ${esc(r.error)}</div>`;
+  const qty = (n) => (n === null || n === undefined ? '—' : Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 3 }));
+  return `<p class="small muted">Busca de ${fmtDate(r.date, false)} feita em ${new Date(r.fetched_at).toLocaleString('pt-BR', { timeZone: TZ })}: ${r.stores.length} loja(s).</p>
+    ${r.stores.map((s) => `
+      <div class="card">
+        <h2 style="margin-top:0">${esc(s.name)}${s.cnpj ? ` <span class="small muted">${esc(s.cnpj)}</span>` : ''}</h2>
+        ${s.errors.map((e) => `<div class="alert alert-warn small">${esc(e)}</div>`).join('')}
+        <div class="grid grid-2">
+          <div>
+            <h3>Formas de pagamento</h3>
+            ${s.payments ? `<div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Qtd</th><th class="num">Valor</th></tr></thead><tbody>
+              ${s.payments.methods.map((m) => `<tr><td>${esc(m.method)}</td><td class="num">${qty(m.count)}</td><td class="num">${money(m.value_cents)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Sem vendas.</td></tr>'}
+              <tr class="total-row"><td>Total</td><td></td><td class="num">${money(s.payments.total_cents)}</td></tr></tbody></table></div>` : '<p class="muted">—</p>'}
+          </div>
+          <div>
+            <h3>Resumo dos produtos</h3>
+            ${s.products ? `<p>${s.products.items.length} produto(s) · <strong>${money(s.products.total_cents)}</strong>
+              ${s.products.other_cents ? `<br><span class="small muted">inclui descontos/outras despesas de ${money(s.products.other_cents)}</span>` : ''}</p>
+              ${s.payments && s.payments.total_cents !== s.products.total_cents ? `<div class="alert alert-info small">O total por produto (${money(s.products.total_cents)}) e o total por forma de pagamento (${money(s.payments.total_cents)}) não batem: vamos entender pelo diagnóstico.</div>` : ''}` : '<p class="muted">—</p>'}
+          </div>
+        </div>
+        ${s.products && s.products.items.length ? `<details style="margin-top:8px"><summary>Ver os ${s.products.items.length} produtos</summary>
+          <div class="table-wrap"><table><thead><tr><th>Código</th><th>Produto</th><th class="num">Qtd</th><th class="num">Valor</th></tr></thead><tbody>
+          ${s.products.items.map((i) => `<tr><td class="mono small">${esc(i.code || '')}</td><td>${esc(i.name)}</td><td class="num">${qty(i.quantity)}</td><td class="num">${money(i.value_cents)}</td></tr>`).join('')}
+          </tbody></table></div></details>` : ''}
+      </div>`).join('')}`;
 }
 
 // ======================= ANÁLISES =======================

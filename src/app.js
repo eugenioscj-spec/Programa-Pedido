@@ -20,6 +20,7 @@ const { createCashflow } = require('./cashflow');
 const { orderPdf } = require('./pdf');
 const { createCrm } = require('./crm');
 const { createAnalytics } = require('./analytics');
+const cplug = require('./cplug');
 const T = require('./time');
 const U = require('./util');
 
@@ -922,6 +923,34 @@ function createApp(db, { testMode = false } = {}) {
     const id = idParam(req);
     inv.editOrderItems({ orderId: id, changes: req.body?.changes || [] });
     res.json({ order: loadOrder(id) });
+  });
+
+  // ---------- admin: integração com o CPlug (teste de conexão) ----------
+  // As credenciais ficam só nas variáveis do servidor; a tela sabe apenas se estão preenchidas.
+  let cplugLast = null;
+  const cplugEnv = () => ({ empresa: process.env.CPLUG_EMPRESA, usuario: process.env.CPLUG_USUARIO, senha: process.env.CPLUG_SENHA });
+  admin.get('/integracoes/cplug', (req, res) => {
+    const e = cplugEnv();
+    res.json({
+      configured: { empresa: !!e.empresa, usuario: !!e.usuario, senha: !!e.senha },
+      last: cplugLast && { date: cplugLast.date, fetched_at: cplugLast.fetched_at, error: cplugLast.error || null, stores: cplugLast.stores || [] },
+    });
+  });
+  admin.post('/integracoes/cplug/testar', async (req, res) => {
+    const date = T.isDate(String(req.body?.date || '')) ? String(req.body.date) : T.localDate();
+    try {
+      cplugLast = await cplug.fetchDay({ date, ...cplugEnv() });
+    } catch (e) {
+      cplugLast = { date, fetched_at: new Date().toISOString(), error: e.message, stores: [], pages: e.pages || [] };
+    }
+    const { pages, ...result } = cplugLast;
+    res.json({ ...result, pages_count: (pages || []).length });
+  });
+  // Diagnóstico para mandar ao Claude: o resultado e as páginas lidas, sem senha, usuário nem códigos de segurança.
+  admin.get('/integracoes/cplug/diagnostico', (req, res) => {
+    if (!cplugLast) throw new BusinessError('Faça um teste de conexão antes.');
+    res.attachment(`diagnostico-cplug-${cplugLast.date}.json`);
+    res.type('application/json').send(JSON.stringify(cplugLast, null, 1));
   });
 
   // ---------- admin: análises do negócio ----------
