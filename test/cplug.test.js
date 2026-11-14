@@ -137,3 +137,14 @@ test('página real do CPlug (diagnóstico de 13/11): produtos lidos da lista de 
   assert.equal(r.other_cents, -100);
   assert.equal(r.total_cents, 1098);
 });
+
+test('página real do CPlug (diagnóstico de 13/11): formas de pagamento pelo valor da venda, não o das devoluções', () => {
+  const rows = [
+    ['Dinheiro', 'R$ 98,75', '98.7500', 98.75], ['Cartão de Crédito', 'R$ 130,20', '130.2000', 228.95],
+    ['Cartão de Débito', 'R$ 216,10', '216.1000', 445.05], ['PIX', 'R$ 114,16', '114.1600', 559.21],
+  ].map(([method, mask, raw, acc]) => ({ group_selected: '13/11/2026', devolution_total_mask: 'R$ 0,00', devolution_total: 0, method, total_value_mask: mask, total_value: raw, group_value: acc }));
+  const r = parsePayments(`<script>$('.table').DataTable({ "data": ${JSON.stringify(rows)} });</script>`);
+  assert.deepEqual(r.methods.map((m) => [m.method, m.value_cents]), [['Dinheiro', 9875], ['Cartão de Crédito', 13020], ['Cartão de Débito', 21610], ['PIX', 11416]]);
+  assert.equal(r.total_cents, 55921, 'igual ao total dos produtos da loja nesse dia');
+  assert.equal(r.returns_cents, 0);
+});

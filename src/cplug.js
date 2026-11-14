@@ -132,16 +132,19 @@ function parsePayments(html) {
   if (arr) {
     const kName = keyOf(arr[0], /name|nome|descri/, /product|produto/) || keyOf(arr[0], /method|payment|forma|pagamento|finaliz|meio/, /id$|_id|code/)
       || keyOf(arr[0], /method|payment|forma|pagamento|finaliz|meio/);
-    const kVal = keyOf(arr[0], /total/) || keyOf(arr[0], /valor|value/);
+    // valor da venda (total_value_mask "R$ 98,75" ou total_value "98.7500"), nunca o das devoluções nem o acumulado (group_value)
+    const kVal = keyOf(arr[0], /total_value_mask/) || keyOf(arr[0], /total_value|valor|value/, /devolu|group|acumul/)
+      || keyOf(arr[0], /total/, /devolu|group|acumul/);
+    const kDev = keyOf(arr[0], /devolu.*mask/) || keyOf(arr[0], /devolu/);
     const kCount = keyOf(arr[0], /quantidade|qtd|count|vendas|cupons/);
     const methods = [];
     for (const r of arr) {
       const name = text(r[kName] ?? '');
       const value = cents(r[kVal]);
       if (!name || value === null || /^total/.test(norm(name))) continue;
-      methods.push({ method: name, count: kCount ? qty(r[kCount]) : null, value_cents: value });
+      methods.push({ method: name, count: kCount ? qty(r[kCount]) : null, value_cents: value, returns_cents: kDev ? cents(r[kDev]) || 0 : 0 });
     }
-    return { methods, total_cents: methods.reduce((x, m) => x + m.value_cents, 0), source: 'data', keys: Object.keys(arr[0]) };
+    return { methods, total_cents: methods.reduce((x, m) => x + m.value_cents, 0), returns_cents: methods.reduce((x, m) => x + m.returns_cents, 0), source: 'data', keys: Object.keys(arr[0]) };
   }
   return parsePaymentsTable(html);
 }
