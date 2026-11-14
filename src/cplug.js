@@ -181,13 +181,20 @@ async function fetchDay({ date, empresa, usuario, senha, base, fetchImpl, keepPa
   const keep = (name, html) => { if (keepPages) pages.push({ name, html: redactHtml(html) }); };
 
   const login = await s.request('/login');
+  keep('login', login.html);
   const token = formToken(login.html);
-  if (!token) { keep('login', login.html); throw Object.assign(new CplugError('Não achei o formulário de login do CPlug.'), { pages }); }
-  if (/recaptcha|hcaptcha|turnstile/i.test(login.html)) throw Object.assign(new CplugError('O login do CPlug pede verificação "não sou um robô". A busca automática não vai contornar.'), { pages });
+  if (!token) throw Object.assign(new CplugError('Não achei o formulário de login do CPlug.'), { pages });
+  // Envia o mesmo formulário que o navegador envia (código da empresa, usuário e senha). Se o CPlug
+  // exigir verificação "não sou um robô", ele recusa e a busca para: não tentamos resolver nem contornar.
   const home = await s.request('/login', { method: 'POST', form: { _token: token, login_code: empresa, username: usuario, password: senha }, referer: '/login' });
   if (/\/login\b/.test(new URL(home.url).pathname) || /name=["']password["']/i.test(home.html)) {
     keep('login-recusado', home.html);
-    throw Object.assign(new CplugError('O CPlug recusou o login. Confira o código da empresa, o usuário e a senha nas variáveis do Render.'), { pages });
+    const msg = text(home.html);
+    const captcha = /captcha|n[aã]o (sou|[eé]) (um )?rob[oô]|verifica[cç][aã]o de seguran[cç]a/i.test(msg)
+      || /class=["'][^"']*(g-recaptcha|h-captcha|cf-turnstile)[^"']*["'][^>]*data-sitekey/i.test(home.html);
+    throw Object.assign(new CplugError(captcha
+      ? 'O CPlug pediu a verificação "não sou um robô" no login. A busca automática não vai contornar: nesse caso o caminho é a API do CPlug.'
+      : 'O CPlug recusou o login. Confira o código da empresa, o usuário e a senha nas variáveis do Render.'), { pages });
   }
   keep('inicio', home.html);
 

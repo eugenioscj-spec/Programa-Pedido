@@ -18,7 +18,7 @@ const PAYMENTS = {
   2: [['Cartão de Débito', '4', 'R$ 1.132,20']],
 };
 
-function fakeCplug({ password = 'certa' } = {}) {
+function fakeCplug({ password = 'certa', captchaScript = false, enforceCaptcha = false } = {}) {
   const sessions = new Map();
   const table = (head, rows) => `<table class="table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td> ${c} </td>`).join('')}</tr>`).join('')}</tbody></table>`;
@@ -33,11 +33,12 @@ function fakeCplug({ password = 'certa' } = {}) {
       if (req.url === '/login' && req.method === 'GET') {
         const id = Math.random().toString(36).slice(2);
         sessions.set(id, { token: `tok${id}`, logged: false, company: 1 });
-        return send(200, `<form method="POST"><input type="hidden" name="_token" value="tok${id}"><input name="login_code"><input name="username"><input type="password" name="password"></form>`,
+        return send(200, `${captchaScript ? '<script src="https://www.google.com/recaptcha/api.js?render=x"></script>' : ''}<form method="POST"><input type="hidden" name="_token" value="tok${id}"><input name="login_code"><input name="username"><input type="password" name="password"></form>`,
           { 'Set-Cookie': `laravel_session=${id}; path=/; httponly` });
       }
       if (req.url === '/login' && req.method === 'POST') {
         if (!sess || form._token !== sess.token) return send(419, 'Page Expired');
+        if (enforceCaptcha) return send(200, '<p>Confirme que você não é um robô.</p><form><input type="password" name="password"></form>');
         if (form.login_code !== '1234' || form.username !== 'robo' || form.password !== password) return send(302, '', { Location: '/login' });
         sess.logged = true;
         return send(302, '', { Location: '/sistema' });
@@ -106,4 +107,14 @@ test('login recusado e variáveis faltando dão mensagem clara', async (t) => {
   const base = `http://127.0.0.1:${server.address().port}`;
   await assert.rejects(fetchDay({ date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', base }), /recusou o login/);
   await assert.rejects(fetchDay({ date: '2026-11-13', empresa: '', usuario: 'robo', senha: 'x', base }), /CPLUG_EMPRESA/);
+});
+
+test('captcha: página que só carrega a ferramenta não bloqueia; exigido de verdade para a busca', async (t) => {
+  const soScript = await fakeCplug({ captchaScript: true });
+  const exigido = await fakeCplug({ captchaScript: true, enforceCaptcha: true });
+  t.after(() => { soScript.close(); exigido.close(); });
+  const args = { date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa' };
+  const ok = await fetchDay({ ...args, base: `http://127.0.0.1:${soScript.address().port}` });
+  assert.equal(ok.stores.length, 2);
+  await assert.rejects(fetchDay({ ...args, base: `http://127.0.0.1:${exigido.address().port}` }), /não sou um robô.*não vai contornar/);
 });
