@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { fetchSales, findList, summarizeSale } = require('../src/rede');
+const { fetchSales, findList, summarizeSale, totals } = require('../src/rede');
 
 function fakeRede() {
   const server = http.createServer((req, res) => {
@@ -36,7 +36,7 @@ test('Rede: token com Client ID/Secret, vendas do dia com paginação e campos r
   const r = await fetchSales({ date: '2026-11-13', pv: '13381369', env });
   assert.equal(r.error, undefined);
   assert.equal(r.sales.length, 2, 'juntou as duas páginas');
-  assert.deepEqual(r.summary[0], { date: '2026-11-13', gross_cents: 4792, net_cents: 4636, fee_cents: 156, brand: 'MASTERCARD', modality: 'CREDIT', installments: 1, nsu: '1', status: 'APPROVED' });
+  assert.deepEqual(r.summary[0], { date: '2026-11-13', hour: null, gross_cents: 4792, net_cents: 4636, fee_cents: 156, brand: 'MASTERCARD', modality: 'CREDIT', installments: 1, nsu: '1', status: 'APPROVED' });
   assert.equal(r.total_cents, 5792);
   assert.ok(!JSON.stringify(r.log).includes('tok-123'), 'o token não vai para o diagnóstico');
 
@@ -50,4 +50,14 @@ test('Rede: acha a lista de vendas em formatos diferentes', () => {
   assert.equal(findList({ content: [{ a: 1 }] }).length, 1);
   assert.equal(findList({ sales: [{ a: 1 }, { a: 2 }] }).length, 2);
   assert.equal(summarizeSale({ grossAmount: '12.5', modality: 'DEBIT' }).gross_cents, 1250);
+});
+
+test('Rede: totais só das aprovadas, canceladas à parte, por modalidade (formato real do sandbox)', () => {
+  const sale = (amount, mdr, type, status = 'APPROVED') => ({ status, saleHour: '18:00:00', amount, mdrAmount: mdr, netAmount: Math.round((amount - mdr) * 100) / 100,
+    installmentQuantity: 1, brandCode: 1, saleDate: '2026-11-13', modality: { type, code: type === 'CREDIT' ? 1 : 2 } });
+  const t = totals([sale(118.12, 2.17, 'CREDIT'), sale(148, 2.35, 'DEBIT'), sale(188.33, 3.48, 'CREDIT', 'CANCELLED')].map(summarizeSale));
+  assert.deepEqual([t.approved_count, t.total_cents, t.fee_cents, t.net_cents], [2, 26612, 452, 26160]);
+  assert.deepEqual([t.cancelled_count, t.cancelled_cents], [1, 18833]);
+  assert.equal(t.by_modality.DEBIT.gross_cents, 14800);
+  assert.equal(summarizeSale(sale(10, 1, 'DEBIT')).brand, 'código 1');
 });

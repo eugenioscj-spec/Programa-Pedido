@@ -88,14 +88,37 @@ function summarizeSale(s) {
   for (const [k, v] of Object.entries(s)) if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) flat[`${k}.${k2}`] = v2;
   return {
     date: pick(flat, 'saleDate', 'movementDate', 'date', 'transactionDate'),
+    hour: pick(flat, 'saleHour', 'hour'),
     gross_cents: toCents(pick(flat, 'amount', 'grossAmount', 'saleAmount', 'totalAmount')),
     net_cents: toCents(pick(flat, 'netAmount', 'liquidAmount')),
     fee_cents: toCents(pick(flat, 'mdrAmount', 'discountAmount', 'feeAmount', 'mdrFee')),
-    brand: pick(flat, 'brandName', 'brand', 'brand.name', 'brandCode', 'brand.code'),
+    // a Rede manda a bandeira como código (brandCode); o nome entra quando a tabela de códigos for confirmada
+    brand: pick(flat, 'brandName', 'brand', 'brand.name') ?? (pick(flat, 'brandCode', 'brand.code') !== null ? `código ${pick(flat, 'brandCode', 'brand.code')}` : null),
     modality: pick(flat, 'modality', 'modality.type', 'modalityType', 'modality.code', 'productType'),
     installments: pick(flat, 'installmentQuantity', 'installments', 'installmentsNumber'),
     nsu: pick(flat, 'nsu', 'authorizationCode'),
     status: pick(flat, 'status', 'saleStatus'),
+  };
+}
+
+// Totais do dia: só as vendas aprovadas contam; as canceladas ficam à parte.
+const isCancelled = (s) => /cancel|estorn|reject|neg/i.test(String(s.status || ''));
+function totals(summary) {
+  const ok = summary.filter((x) => !isCancelled(x));
+  const sum = (list, k) => list.reduce((a, x) => a + (x[k] || 0), 0);
+  const byModality = {};
+  for (const x of ok) {
+    const k = x.modality || 'não informado';
+    byModality[k] = byModality[k] || { count: 0, gross_cents: 0, fee_cents: 0, net_cents: 0 };
+    byModality[k].count += 1;
+    byModality[k].gross_cents += x.gross_cents || 0;
+    byModality[k].fee_cents += x.fee_cents || 0;
+    byModality[k].net_cents += x.net_cents || 0;
+  }
+  const cancelled = summary.filter(isCancelled);
+  return {
+    approved_count: ok.length, total_cents: sum(ok, 'gross_cents'), fee_cents: sum(ok, 'fee_cents'), net_cents: sum(ok, 'net_cents'),
+    cancelled_count: cancelled.length, cancelled_cents: sum(cancelled, 'gross_cents'), by_modality: byModality,
   };
 }
 
@@ -120,7 +143,7 @@ async function fetchSales({ date, pv, env = process.env, fetchImpl = fetch } = {
       if (!list.length) break;
     }
     out.summary = out.sales.map(summarizeSale);
-    out.total_cents = out.summary.reduce((s, x) => s + (x.gross_cents || 0), 0);
+    Object.assign(out, totals(out.summary));
   } catch (e) {
     out.error = e.message;
   }
@@ -129,4 +152,4 @@ async function fetchSales({ date, pv, env = process.env, fetchImpl = fetch } = {
   return out;
 }
 
-module.exports = { fetchSales, config, findList, summarizeSale, SANDBOX_PVS, RedeError };
+module.exports = { fetchSales, config, findList, summarizeSale, totals, SANDBOX_PVS, RedeError };

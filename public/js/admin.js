@@ -1769,15 +1769,23 @@ async function renderRedeCard() {
 function redeResult(r) {
   if (r.error) return `<div class="alert alert-error"><strong>Não deu certo:</strong> ${esc(r.error)}</div>`;
   const list = r.summary || [];
-  const byMod = {};
-  for (const s of list) { const k = s.modality || 'não informado'; byMod[k] = (byMod[k] || 0) + (s.gross_cents || 0); }
-  return `<div class="alert alert-ok small">Conexão com a Rede funcionou: ${list.length} venda(s) em ${fmtDate(r.date, false)} no PV ${esc(r.pv)} · total ${money(r.total_cents)}.</div>
-    ${list.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Bandeira</th><th>Modalidade</th><th class="num">Parc.</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th><th>Status</th></tr></thead><tbody>
-      ${list.slice(0, 50).map((s) => `<tr><td class="nowrap small">${esc(s.date || '')}</td><td>${esc(s.brand ?? '—')}</td><td>${esc(s.modality ?? '—')}</td><td class="num">${esc(s.installments ?? '—')}</td>
+  const mods = Object.entries(r.by_modality || {});
+  const modName = (m) => ({ CREDIT: 'Crédito', DEBIT: 'Débito' }[m] || m);
+  return `<div class="alert alert-ok small">Conexão com a Rede funcionou: ${fmtDate(r.date, false)}, PV ${esc(r.pv)} · ${r.approved_count} venda(s) aprovada(s)
+      ${r.cancelled_count ? ` · ${r.cancelled_count} cancelada(s) (${money(r.cancelled_cents)}, fora do total)` : ''}.</div>
+    <div class="grid grid-4" style="margin-bottom:10px">
+      <div class="card stat"><div class="label">Vendido (bruto)</div><div class="value">${money(r.total_cents)}</div></div>
+      <div class="card stat"><div class="label">Taxas da Rede</div><div class="value qty-neg">${money(r.fee_cents)}</div><div class="small muted">${r.total_cents ? pct(r.fee_cents / r.total_cents) : '—'} do bruto</div></div>
+      <div class="card stat"><div class="label">A receber (líquido)</div><div class="value qty-pos">${money(r.net_cents)}</div></div>
+    </div>
+    ${mods.length ? `<div class="table-wrap" style="margin-bottom:10px"><table><thead><tr><th>Modalidade</th><th class="num">Vendas</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th></tr></thead><tbody>
+      ${mods.map(([m, v]) => `<tr><td>${esc(modName(m))}</td><td class="num">${v.count}</td><td class="num">${money(v.gross_cents)}</td><td class="num">${money(v.fee_cents)}</td><td class="num">${money(v.net_cents)}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+    ${list.length ? `<details><summary>Ver as ${list.length} vendas</summary><div class="table-wrap"><table><thead><tr><th>Hora</th><th>Bandeira</th><th>Modalidade</th><th class="num">Parc.</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th><th>Status</th></tr></thead><tbody>
+      ${list.slice(0, 200).map((s) => `<tr ${/cancel/i.test(s.status || '') ? 'style="opacity:.5"' : ''}><td class="nowrap small">${esc(s.hour || s.date || '')}</td><td class="small">${esc(s.brand ?? '—')}</td><td>${esc(modName(s.modality ?? '—'))}</td><td class="num">${esc(s.installments ?? '—')}</td>
         <td class="num">${s.gross_cents === null ? '—' : money(s.gross_cents)}</td><td class="num">${s.fee_cents === null ? '—' : money(s.fee_cents)}</td>
         <td class="num">${s.net_cents === null ? '—' : money(s.net_cents)}</td><td class="small">${esc(s.status ?? '')}</td></tr>`).join('')}
-      </tbody></table></div>
-      <p class="small muted">Por modalidade: ${Object.entries(byMod).map(([k, v]) => `${esc(k)} ${money(v)}`).join(' · ')}. Colunas com “—” ainda não foram reconhecidas: o diagnóstico mostra os nomes que a Rede usa.</p>` : ''}`;
+      </tbody></table></div></details>` : ''}`;
 }
 
 function integrationResult(r) {
