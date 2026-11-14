@@ -20,6 +20,12 @@ const PAYMENTS = {
 
 function fakeCplug({ password = 'certa', captchaScript = false, enforceCaptcha = false } = {}) {
   const sessions = new Map();
+  let waitOnce = true;
+  // como o CPlug real: tabela vazia e os dados numa lista que a DataTable usa para desenhar
+  const dataTable = (rows) => `<div class="row title-report"><div>Vendas - Período</div></div><script>$tableList = $('.table').DataTable({
+    "language": language, "data": ${JSON.stringify(rows.map(([code, name, date, amount, total]) => ({ unit: 'Un', code_product: code, name_product: name, sale_date: date, amount_product: amount, total_value: total })))},
+    "columns": [{ "data": "code_product" }] });</script><table class="table"><thead><tr><th>Código</th><th>Produto</th><th>Data</th><th>Quantidade</th><th>Valor</th></tr></thead>
+    <tfoot><tr><th>Total:</th><th></th><th></th><th></th><th></th></tr></tfoot></table>`;
   const table = (head, rows) => `<table class="table"><thead><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td> ${c} </td>`).join('')}</tr>`).join('')}</tbody></table>`;
   const server = http.createServer((req, res) => {
@@ -56,10 +62,12 @@ function fakeCplug({ password = 'certa', captchaScript = false, enforceCaptcha =
         if (req.method === 'GET') return send(200, `${header}<form>${tokenInput}</form>`);
         if (form._token !== sess.token) return send(419, 'Page Expired');
         if (form.tab_actived === 'sale' && form.groupProductsByDay === '1' && form.date_start === '13/11/2026') {
-          return send(200, `${header}${tokenInput}${table(['Código', 'Produto', 'Data', 'Quantidade', 'Valor'], PRODUCTS[sess.company])}`);
+          if (sess.company === 1) return send(200, `${header}${tokenInput}${dataTable(PRODUCTS[1])}`);
+          return send(200, `${header}${tokenInput}<div class="title-report">Vendas</div>${table(['Código', 'Produto', 'Data', 'Quantidade', 'Valor'], PRODUCTS[sess.company])}`);
         }
         if (form.tab_actived === 'day' && form.show === 'method' && form.dt_start === '13/11/2026') {
-          return send(200, `${header}${tokenInput}${table(['Forma de pagamento', 'Quantidade', 'Valor total'], [...PAYMENTS[sess.company], ['Total', '', 'R$ 0,00']])}`);
+          if (sess.company === 2 && waitOnce) { waitOnce = false; return send(200, `${tokenInput}<div class="modal">Relatório Vendas Aguarde 1 segundo(s) para gerar esse relatório.</div>`); }
+          return send(200, `${header}${tokenInput}<div class="title-report">Vendas</div>${table(['Forma de pagamento', 'Quantidade', 'Valor total'], [...PAYMENTS[sess.company], ['Total', '', 'R$ 0,00']])}`);
         }
         return send(200, `${header}<p>Nenhum resultado</p>`);
       }
@@ -81,7 +89,8 @@ test('busca do dia: login, as duas lojas, produtos e formas de pagamento', async
   const server = await fakeCplug();
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
-  const r = await fetchDay({ date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', base });
+  const waits = [];
+  const r = await fetchDay({ date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', base, wait: async (ms) => { waits.push(ms); } });
   assert.equal(r.stores.length, 2);
   const [centro, buritis] = r.stores;
   assert.equal(centro.name, 'MT SINOP CENTRO');
@@ -94,7 +103,9 @@ test('busca do dia: login, as duas lojas, produtos e formas de pagamento', async
     [['Dinheiro', 3, 4000], ['Cartão de Crédito', 2, 5293], ['PIX', 1, 2000]]);
   assert.equal(centro.payments.total_cents, centro.products.total_cents, 'produtos e pagamentos batem');
   assert.equal(buritis.products.items[1].value_cents, 101225);
-  assert.equal(buritis.payments.total_cents, 113220);
+  assert.equal(buritis.payments.total_cents, 113220, 'esperou o "Aguarde" e pediu de novo');
+  assert.equal(centro.products.source, 'data', 'leu a lista de dados da página');
+  assert.ok(waits.includes(2000), 'esperou o tempo pedido pelo CPlug (+1 s)');
   // diagnóstico sem a senha e sem o código de segurança do formulário
   const dump = JSON.stringify(r.pages);
   assert.ok(r.pages.length >= 4);
@@ -105,7 +116,7 @@ test('login recusado e variáveis faltando dão mensagem clara', async (t) => {
   const server = await fakeCplug({ password: 'outra' });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
-  await assert.rejects(fetchDay({ date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', base }), /recusou o login/);
+  await assert.rejects(fetchDay({ date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', base, wait: async () => {} }), /recusou o login/);
   await assert.rejects(fetchDay({ date: '2026-11-13', empresa: '', usuario: 'robo', senha: 'x', base }), /CPLUG_EMPRESA/);
 });
 
@@ -113,8 +124,16 @@ test('captcha: página que só carrega a ferramenta não bloqueia; exigido de ve
   const soScript = await fakeCplug({ captchaScript: true });
   const exigido = await fakeCplug({ captchaScript: true, enforceCaptcha: true });
   t.after(() => { soScript.close(); exigido.close(); });
-  const args = { date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa' };
+  const args = { date: '2026-11-13', empresa: '1234', usuario: 'robo', senha: 'certa', wait: async () => {} };
   const ok = await fetchDay({ ...args, base: `http://127.0.0.1:${soScript.address().port}` });
   assert.equal(ok.stores.length, 2);
   await assert.rejects(fetchDay({ ...args, base: `http://127.0.0.1:${exigido.address().port}` }), /não sou um robô.*não vai contornar/);
+});
+
+test('página real do CPlug (diagnóstico de 13/11): produtos lidos da lista de dados', () => {
+  const html = `<script>$tableList = $tableEle.DataTable({ "language": language, "data": [{"unit":"Un","code_product":"543","name_product":"SENSA BRIGADEIRO","sale_date":"13\\/11\\/2026","amount_product":"2.0000","total_value":"R$ 11,98"},{"unit":"Un","code_product":"---","name_product":"Outras despesas, Descontos e Frete","sale_date":"","amount_product":"0","total_value":"R$ -1,00"}], "footerCallback": function () {} });</script>`;
+  const r = parseProducts(html);
+  assert.deepEqual(r.items, [{ code: '543', name: 'SENSA BRIGADEIRO', date: '13/11/2026', quantity: 2, value_cents: 1198 }]);
+  assert.equal(r.other_cents, -100);
+  assert.equal(r.total_cents, 1098);
 });

@@ -52,8 +52,61 @@ function qty(v) {
 const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const col = (head, ...names) => head.findIndex((h) => names.some((n) => norm(h).includes(n)));
 
-// Vendas por produto: tabela com Produto + Quantidade + Valor.
+// Listas de dados que a página entrega para as tabelas desenharem ("data": [ {...}, ... ]).
+function dataArrays(html) {
+  const out = [];
+  const src = String(html);
+  const re = /["']?data["']?\s*:\s*\[/g;
+  let m;
+  while ((m = re.exec(src))) {
+    let i = m.index + m[0].length - 1; // no "["
+    const start = i;
+    let depth = 0;
+    let quote = null;
+    for (; i < src.length; i += 1) {
+      const ch = src[i];
+      if (quote) {
+        if (ch === '\\') i += 1;
+        else if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === '[') depth += 1;
+      else if (ch === ']') { depth -= 1; if (depth === 0) break; }
+    }
+    try {
+      const arr = JSON.parse(src.slice(start, i + 1));
+      if (Array.isArray(arr) && arr.length && arr.every((x) => x && typeof x === 'object' && !Array.isArray(x))) out.push(arr);
+    } catch { /* não era JSON */ }
+    re.lastIndex = i;
+  }
+  return out;
+}
+const keyOf = (obj, re, avoid) => Object.keys(obj).find((k) => re.test(norm(k)) && !(avoid && avoid.test(norm(k))));
+
+// Vendas por produto: lista de dados da página (code_product, name_product, sale_date, amount_product, total_value)
+// ou, se vier assim, a tabela HTML com Produto + Quantidade + Valor.
 function parseProducts(html) {
+  const arr = dataArrays(html).find((a) => keyOf(a[0], /name_product|produto/) && keyOf(a[0], /amount|quantidade|qtd/));
+  if (arr) {
+    const k = {
+      code: keyOf(arr[0], /code_product|codigo/), name: keyOf(arr[0], /name_product|produto/), date: keyOf(arr[0], /date|data/),
+      qty: keyOf(arr[0], /amount|quantidade|qtd/), value: keyOf(arr[0], /total|valor|value/),
+    };
+    const items = [];
+    let other = 0;
+    for (const r of arr) {
+      const name = text(r[k.name] ?? '');
+      const value = cents(r[k.value]);
+      if (!name || value === null) continue;
+      const code = k.code ? String(r[k.code] ?? '').trim() : null;
+      if (/outras despesas|descontos|frete/i.test(name) && (!code || /^-+$/.test(code))) { other += value; continue; }
+      items.push({ code, name, date: k.date ? r[k.date] : null, quantity: qty(r[k.qty]), value_cents: value });
+    }
+    return { items, other_cents: other, total_cents: items.reduce((x, i) => x + i.value_cents, 0) + other, source: 'data', keys: Object.keys(arr[0]) };
+  }
+  return parseProductsTable(html);
+}
+
+function parseProductsTable(html) {
   const t = tables(html).find((x) => col(x.head, 'produto') >= 0 && col(x.head, 'quantidade', 'qtd') >= 0 && col(x.head, 'valor', 'total') >= 0);
   if (!t) return null;
   const iCode = col(t.head, 'codigo', 'cod');
@@ -73,8 +126,27 @@ function parseProducts(html) {
   return { items, other_cents: other, total_cents: items.reduce((s, i) => s + i.value_cents, 0) + other, head: t.head };
 }
 
-// Vendas por forma de pagamento: tabela que tenha uma coluna de forma/meio de pagamento (ou a 1ª coluna) + valor.
+// Vendas por forma de pagamento: lista de dados com a forma/meio de pagamento + valor, ou a tabela HTML.
 function parsePayments(html) {
+  const arr = dataArrays(html).find((a) => keyOf(a[0], /method|payment|forma|pagamento|finaliz|meio/) && keyOf(a[0], /total|valor|value/));
+  if (arr) {
+    const kName = keyOf(arr[0], /name|nome|descri/, /product|produto/) || keyOf(arr[0], /method|payment|forma|pagamento|finaliz|meio/, /id$|_id|code/)
+      || keyOf(arr[0], /method|payment|forma|pagamento|finaliz|meio/);
+    const kVal = keyOf(arr[0], /total/) || keyOf(arr[0], /valor|value/);
+    const kCount = keyOf(arr[0], /quantidade|qtd|count|vendas|cupons/);
+    const methods = [];
+    for (const r of arr) {
+      const name = text(r[kName] ?? '');
+      const value = cents(r[kVal]);
+      if (!name || value === null || /^total/.test(norm(name))) continue;
+      methods.push({ method: name, count: kCount ? qty(r[kCount]) : null, value_cents: value });
+    }
+    return { methods, total_cents: methods.reduce((x, m) => x + m.value_cents, 0), source: 'data', keys: Object.keys(arr[0]) };
+  }
+  return parsePaymentsTable(html);
+}
+
+function parsePaymentsTable(html) {
   const candidates = tables(html).filter((x) => col(x.head, 'valor', 'total') >= 0);
   const t = candidates.find((x) => col(x.head, 'forma', 'pagamento', 'meio', 'metodo', 'finalizadora') >= 0) || null;
   if (!t) return null;
@@ -173,8 +245,26 @@ function reportForm(token, extra) {
 }
 const br = (iso) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// O CPlug só deixa gerar um relatório a cada poucos segundos: quando a página responde "Aguarde N
+// segundo(s) para gerar esse relatório", esperamos o tempo pedido e pedimos de novo (até 5 vezes).
+const WAIT_RE = /Aguarde\s+(\d+)\s+segundo/i;
+const hasReport = (html) => /class=["'][^"']*title-report/i.test(html) || dataArrays(html).length > 0;
+async function reportRequest(s, form, { wait = sleep } = {}) {
+  let last;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    last = await s.request('/sistema/relatorios/vendas', { method: 'POST', referer: '/sistema/relatorios/vendas', form });
+    if (hasReport(last.html)) return last;
+    const m = last.html.match(WAIT_RE);
+    if (!m) return last;
+    await wait((Number(m[1]) + 1) * 1000 + (attempt ? 1000 : 0));
+    form = { ...form, _token: formToken(last.html) || form._token };
+  }
+  return last;
+}
+
 // Busca as vendas de um dia (YYYY-MM-DD) em todas as lojas da conta.
-async function fetchDay({ date, empresa, usuario, senha, base, fetchImpl, keepPages = true } = {}) {
+async function fetchDay({ date, empresa, usuario, senha, base, fetchImpl, keepPages = true, wait = sleep, gap = 3500 } = {}) {
   if (!empresa || !usuario || !senha) throw new CplugError('Faltam as variáveis CPLUG_EMPRESA, CPLUG_USUARIO e CPLUG_SENHA no servidor.');
   const s = createSession({ base, fetchImpl });
   const pages = [];
@@ -216,22 +306,22 @@ async function fetchDay({ date, empresa, usuario, senha, base, fetchImpl, keepPa
       const cnpj = text(page.html).match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/);
       if (cnpj) store.cnpj = cnpj[0];
 
-      const prod = await s.request('/sistema/relatorios/vendas', {
-        method: 'POST', referer: '/sistema/relatorios/vendas',
-        form: reportForm(t, { date_start: br(date), date_end: br(date), groupProductsByDay: '1' }),
-      });
+      const prod = await reportRequest(s, reportForm(t, { date_start: br(date), date_end: br(date), groupProductsByDay: '1' }), { wait });
       keep(`loja-${c.id}-produtos`, prod.html);
       store.products = parseProducts(prod.html);
-      if (!store.products) store.errors.push('Não achei a tabela de vendas por produto.');
+      if (!store.products) store.errors.push(WAIT_RE.test(prod.html) && !hasReport(prod.html)
+        ? 'O CPlug pediu para aguardar e não gerou o relatório de produtos. Tente de novo em 1 minuto.'
+        : 'Não achei a tabela de vendas por produto.');
 
+      await wait(gap); // intervalo entre relatórios, para não esbarrar no limite do CPlug
       const t2 = formToken(prod.html) || t;
-      const pay = await s.request('/sistema/relatorios/vendas', {
-        method: 'POST', referer: '/sistema/relatorios/vendas',
-        form: reportForm(t2, { tab_actived: 'day', dt_start: br(date), dt_end: br(date), show: 'method' }),
-      });
+      const pay = await reportRequest(s, reportForm(t2, { tab_actived: 'day', dt_start: br(date), dt_end: br(date), show: 'method' }), { wait });
       keep(`loja-${c.id}-pagamentos`, pay.html);
       store.payments = parsePayments(pay.html);
-      if (!store.payments) store.errors.push('Não achei a tabela de vendas por forma de pagamento.');
+      if (!store.payments) store.errors.push(WAIT_RE.test(pay.html) && !hasReport(pay.html)
+        ? 'O CPlug pediu para aguardar e não gerou o relatório de formas de pagamento. Tente de novo em 1 minuto.'
+        : 'Não achei a tabela de vendas por forma de pagamento.');
+      await wait(gap);
     } catch (e) {
       store.errors.push(e.message);
     }
@@ -240,4 +330,4 @@ async function fetchDay({ date, empresa, usuario, senha, base, fetchImpl, keepPa
   return { date, fetched_at: new Date().toISOString(), stores, pages };
 }
 
-module.exports = { fetchDay, parseProducts, parsePayments, parseCompanies, tables, cents, qty, formToken, redactHtml, CplugError };
+module.exports = { fetchDay, parseProducts, parsePayments, dataArrays, parseCompanies, tables, cents, qty, formToken, redactHtml, CplugError };
