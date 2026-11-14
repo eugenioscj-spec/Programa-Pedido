@@ -47,6 +47,9 @@ const testMode = String(process.env.MODO_TESTE || '').toLowerCase() === 'sim';
 
 const app = createApp(db, { testMode });
 
+// Rotina automática do CPlug (vendas das lojas): de hora em hora e o fechamento de madrugada.
+app.locals.sync.start();
+
 const server = app.listen(PORT, () => {
   console.log(`Oggi Pedidos B2B rodando em http://localhost:${PORT}`);
   console.log(`  Portal do cliente: http://localhost:${PORT}/`);

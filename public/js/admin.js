@@ -88,6 +88,7 @@ function setView(view) {
     crm: renderCrm,
     analises: renderAnalytics,
     integracoes: renderIntegrations,
+    'vendas-lojas': renderStoreSales,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
@@ -1696,6 +1697,7 @@ async function renderIntegrations() {
   const r = INT.result || st.last;
   app.innerHTML = `
     <div class="section-head"><h1>Integrações</h1></div>
+    <div class="card" id="auto-card"><div class="empty">Carregando…</div></div>
     <div class="card">
       <h2 style="margin-top:0">CPlug (vendas das lojas)</h2>
       <p class="small muted">O sistema entra no CPlug com a conta cadastrada nas variáveis do Render e lê as vendas do dia de cada loja:
@@ -1712,6 +1714,7 @@ async function renderIntegrations() {
     <div id="int-result">${r ? integrationResult(r) : ''}</div>
     <div class="card" id="rede-card"><div class="empty">Carregando…</div></div>`;
   renderRedeCard();
+  renderAutoCard();
   $('#int-date').addEventListener('change', (e) => { INT.date = e.target.value; });
   const btn = $('#btn-int-test');
   btn.addEventListener('click', () => guard(async () => {
@@ -1786,6 +1789,139 @@ function redeResult(r) {
         <td class="num">${s.gross_cents === null ? '—' : money(s.gross_cents)}</td><td class="num">${s.fee_cents === null ? '—' : money(s.fee_cents)}</td>
         <td class="num">${s.net_cents === null ? '—' : money(s.net_cents)}</td><td class="small">${esc(s.status ?? '')}</td></tr>`).join('')}
       </tbody></table></div></details>` : ''}`;
+}
+
+// Rotina automática do CPlug: liga/desliga, busca manual, histórico das buscas, lojas e de-para.
+async function renderAutoCard() {
+  const box = $('#auto-card');
+  if (!box) return;
+  const a = await api('/api/admin/integracoes/cplug/automacao');
+  const count = (st) => (a.products.find((x) => x.status === st) || {}).n || 0;
+  const runLabel = { hoje: 'Hoje (de hora em hora)', fechamento: 'Fechamento do dia', manual: 'Manual' };
+  const stTag = { ok: '<span class="tag tag-entregue">ok</span>', parcial: '<span class="tag tag-low">parcial</span>', erro: '<span class="tag tag-cancelado">erro</span>', rodando: '<span class="tag tag-confirmado">rodando</span>' };
+  const locOptions = (sel) => `<option value="">— escolher —</option>${a.locations.map((l) => `<option value="${l.id}" ${l.id === sel ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}`;
+  box.innerHTML = `
+    <h2 style="margin-top:0">Rotina automática do CPlug</h2>
+    <p class="small muted">De hora em hora (8h às 23h) o sistema busca as vendas de hoje de cada loja; a partir das 3h busca o fechamento de ontem.
+      Por enquanto ele só <strong>guarda</strong> as vendas (painel “Vendas das lojas”): nada é lançado na DRE, no caixa ou no estoque.</p>
+    ${a.configured ? '' : '<div class="alert alert-warn small">Cadastre CPLUG_EMPRESA, CPLUG_USUARIO e CPLUG_SENHA no Render para a rotina funcionar.</div>'}
+    <div class="row" style="align-items:flex-end">
+      <label class="check" style="margin:0 16px 10px 0"><input type="checkbox" id="auto-on" ${a.auto ? 'checked' : ''}> Rotina ligada</label>
+      <div class="field"><label>Buscar agora o dia</label><input type="date" id="auto-date" value="${todayLocal()}"></div>
+      <div class="field"><label>&nbsp;</label><button id="btn-auto-run" ${a.configured && !a.running ? '' : 'disabled'}>${a.running ? 'Buscando…' : 'Buscar e guardar'}</button></div>
+    </div>
+    <div class="grid grid-2" style="margin-top:6px">
+      <div>
+        <h3>Lojas do CPlug</h3>
+        ${a.stores.length ? `<div class="table-wrap"><table><thead><tr><th>Empresa no CPlug</th><th>É a nossa loja</th><th class="hide-sm">Último dia</th></tr></thead><tbody>
+          ${a.stores.map((s) => `<tr><td>${esc(s.name)}<div class="small muted">${esc(s.cnpj || '')}</div></td>
+            <td><select data-store="${s.id}">${locOptions(s.location_id)}</select></td><td class="hide-sm small">${s.last_date ? fmtDate(s.last_date, false) : '—'}</td></tr>`).join('')}
+          </tbody></table></div>` : '<p class="small muted">As lojas aparecem depois da primeira busca.</p>'}
+        <h3 style="margin-top:14px">Produtos do CPlug (de-para)</h3>
+        <p class="small">${count('confirmado')} ligado(s) · <strong>${count('sugerido')}</strong> com sugestão para confirmar · ${count('pendente')} sem sugestão · ${count('ignorar')} ignorado(s)</p>
+        <button class="btn-secondary btn-sm" id="btn-depara" ${a.products.length ? '' : 'disabled'}>Abrir de-para</button>
+      </div>
+      <div>
+        <h3>Últimas buscas</h3>
+        <div class="table-wrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Dia(s)</th><th></th></tr></thead><tbody>
+          ${a.runs.map((r) => `<tr title="${esc(r.message || '')}"><td class="nowrap small">${fmtDate(r.started_at)}</td><td class="small">${esc(runLabel[r.kind] || r.kind)}</td>
+            <td class="small">${esc(r.dates.split(',').map((d) => fmtDate(d, false)).join(', '))}</td><td>${stTag[r.status] || esc(r.status)}${r.message ? `<div class="small muted" style="max-width:260px">${esc(r.message.slice(0, 160))}</div>` : ''}</td></tr>`).join('')
+            || '<tr><td colspan="4" class="empty">Nenhuma busca ainda.</td></tr>'}</tbody></table></div>
+      </div>
+    </div>`;
+  $('#auto-on').addEventListener('change', (e) => guard(async () => {
+    await api('/api/admin/integracoes/cplug/automacao', { method: 'PUT', body: { auto: e.target.checked } });
+    toast(e.target.checked ? 'Rotina ligada.' : 'Rotina desligada.', 'ok');
+  }));
+  const run = $('#btn-auto-run');
+  run.addEventListener('click', () => guard(async () => {
+    run.disabled = true;
+    run.textContent = 'Buscando… (até 1 minuto)';
+    try {
+      const { run: r } = await api('/api/admin/integracoes/cplug/buscar', { method: 'POST', body: { date: $('#auto-date').value } });
+      toast(r.status === 'erro' ? `Não deu certo: ${r.message}` : `Vendas guardadas (${r.stores} loja(s)).`, r.status === 'erro' ? 'error' : 'ok');
+    } finally {
+      renderAutoCard();
+    }
+  }));
+  $$('[data-store]', box).forEach((sel) => sel.addEventListener('change', () => guard(async () => {
+    await api(`/api/admin/integracoes/lojas/${sel.dataset.store}`, { method: 'PUT', body: { location_id: sel.value || null } });
+    toast('Loja ligada.', 'ok');
+  })));
+  const dp = $('#btn-depara');
+  if (dp) dp.addEventListener('click', () => guard(openDePara));
+}
+
+async function openDePara() {
+  const { items, products } = await api('/api/admin/integracoes/cplug/produtos');
+  const opts = (sel) => `<option value="">— escolher —</option>${products.map((p) => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}`;
+  const tag = { confirmado: '<span class="tag tag-entregue">ligado</span>', sugerido: '<span class="tag tag-low">sugestão</span>', pendente: '<span class="tag tag-cancelado">sem par</span>', ignorar: '<span class="tag">ignorado</span>' };
+  const sugeridos = items.filter((i) => i.status === 'sugerido').length;
+  const m = openModal(`
+    <div class="modal-head"><h2>De-para: produtos do CPlug → nosso cadastro</h2><button class="modal-close" data-close>×</button></div>
+    <p class="small muted">Cada produto vendido no CPlug precisa estar ligado a um produto do nosso cadastro (é isso que vai dar baixa no estoque da loja e calcular o custo).
+      Os marcados como <strong>sugestão</strong> foram ligados pelo nome: confira e confirme. “Ignorar” é para itens que não são produto (taxas, serviços).</p>
+    ${sugeridos ? `<button class="btn-ok btn-sm" id="dp-all" style="margin-bottom:10px">Confirmar as ${sugeridos} sugestões</button>` : ''}
+    <div class="table-wrap" style="max-height:60vh;overflow:auto"><table><thead><tr><th>No CPlug</th><th>No nosso cadastro</th><th></th><th></th></tr></thead><tbody>
+      ${items.map((i) => `<tr><td>${esc(i.name)}<div class="small muted">cód. ${esc(i.code || '—')}${i.sold_qty ? ` · ${Number(i.sold_qty).toLocaleString('pt-BR')} un vendidas` : ''}</div></td>
+        <td><select data-dp="${i.id}" style="min-width:240px">${opts(i.product_id)}</select></td><td>${tag[i.status]}</td>
+        <td class="nowrap"><button class="btn-secondary btn-sm" data-dp-ok="${i.id}">Confirmar</button> <button class="btn-link small" data-dp-ign="${i.id}">Ignorar</button></td></tr>`).join('')}
+    </tbody></table></div>`, { wide: true });
+  const save = (id, body) => guard(async () => {
+    await api(`/api/admin/integracoes/cplug/produtos/${id}`, { method: 'PUT', body });
+    toast('Salvo.', 'ok');
+    closeModal();
+    await openDePara();
+    renderAutoCard();
+  });
+  $$('[data-dp-ok]', m).forEach((b) => b.addEventListener('click', () => save(b.dataset.dpOk, { product_id: $(`[data-dp="${b.dataset.dpOk}"]`, m).value, status: 'confirmado' })));
+  $$('[data-dp-ign]', m).forEach((b) => b.addEventListener('click', () => save(b.dataset.dpIgn, { status: 'ignorar' })));
+  const all = $('#dp-all', m);
+  if (all) all.addEventListener('click', () => guard(async () => {
+    const r = await api('/api/admin/integracoes/cplug/produtos/confirmar-sugestoes', { method: 'POST', body: {} });
+    toast(`${r.confirmed} produto(s) ligado(s).`, 'ok');
+    closeModal();
+    await openDePara();
+    renderAutoCard();
+  }));
+}
+
+// ======================= VENDAS DAS LOJAS =======================
+const VL = { date: null };
+async function renderStoreSales() {
+  if (!VL.date) VL.date = todayLocal();
+  const d = await api(`/api/admin/lojas/vendas?date=${VL.date}`);
+  const withData = d.stores.filter((s) => s.total_cents !== null);
+  const total = withData.reduce((x, s) => x + s.total_cents, 0);
+  const prevTotal = withData.reduce((x, s) => x + (s.last_week_cents || 0), 0);
+  const methods = {};
+  for (const s of withData) for (const p of s.payments) methods[p.method] = (methods[p.method] || 0) + p.value_cents;
+  const vs = (cur, prev) => (prev ? `<span class="${cur >= prev ? 'qty-pos' : 'qty-neg'}">${cur >= prev ? '▲' : '▼'} ${pct(Math.abs(cur - prev) / prev)}</span> <span class="muted">vs mesmo dia da semana passada</span>` : '<span class="muted">sem comparação</span>');
+  app.innerHTML = `
+    <div class="section-head"><h1>Vendas das lojas</h1><span class="spacer"></span>
+      <input type="date" id="vl-date" value="${VL.date}" style="max-width:180px"></div>
+    <p class="small muted">Vendas do balcão trazidas do CPlug. ${d.last_run ? `Última busca: ${fmtDate(d.last_run.started_at)} (${esc(d.last_run.status)}).` : 'Nenhuma busca ainda: veja Integrações.'}</p>
+    <div class="grid grid-4" style="margin-bottom:14px">
+      <div class="card stat"><div class="label">Total das lojas</div><div class="value">${money(total)}</div><div class="small">${vs(total, prevTotal)}</div></div>
+      ${Object.entries(methods).sort((a, b) => b[1] - a[1]).map(([m, v]) => `<div class="card stat"><div class="label">${esc(m)}</div><div class="value">${money(v)}</div><div class="small muted">${total ? pct(v / total) : ''}</div></div>`).join('')}
+    </div>
+    ${d.stores.map((s) => `
+      <div class="card">
+        <h2 style="margin-top:0">${esc(s.location_name || s.name)} <span class="small muted">${s.location_name ? esc(s.name) : '<span class="tag tag-low">ligar à nossa loja em Integrações</span>'}</span></h2>
+        ${s.total_cents === null ? '<p class="muted">Sem dados deste dia.</p>' : `
+        <div class="grid grid-2">
+          <div>
+            <div class="value" style="font-size:1.6rem;font-weight:700">${money(s.total_cents)}</div>
+            <div class="small">${vs(s.total_cents, s.last_week_cents)}</div>
+            <div class="small muted">${s.items} produto(s) diferentes${s.other_cents ? ` · descontos ${money(s.other_cents)}` : ''} · atualizado ${fmtDate(s.fetched_at)}</div>
+            <div class="table-wrap" style="margin-top:8px"><table><tbody>${s.payments.map((p) => `<tr><td>${esc(p.method)}</td><td class="num">${money(p.value_cents)}</td></tr>`).join('')}</tbody></table></div>
+          </div>
+          <div><h3 style="margin-top:0">Mais vendidos</h3><div class="table-wrap"><table><tbody>
+            ${s.top.map((t) => `<tr><td>${esc(t.product_name || t.name)}${t.product_name ? '' : ' <span class="tag tag-low">sem de-para</span>'}</td><td class="num">${Number(t.quantity).toLocaleString('pt-BR')} un</td><td class="num">${money(t.value_cents)}</td></tr>`).join('')}
+          </tbody></table></div></div>
+        </div>`}
+      </div>`).join('') || '<div class="empty">Nenhuma loja ainda. Faça a primeira busca em Integrações.</div>'}`;
+  $('#vl-date').addEventListener('change', (e) => { VL.date = e.target.value; guard(renderStoreSales); });
 }
 
 function integrationResult(r) {

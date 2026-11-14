@@ -22,6 +22,7 @@ const { createCrm } = require('./crm');
 const { createAnalytics } = require('./analytics');
 const cplug = require('./cplug');
 const rede = require('./rede');
+const { createSync } = require('./sync');
 const T = require('./time');
 const U = require('./util');
 
@@ -85,6 +86,8 @@ function createApp(db, { testMode = false } = {}) {
   const cashflow = createCashflow(db, accounts, recurring);
   const crm = createCrm(db);
   const analytics = createAnalytics(db, reports);
+  const sync = createSync(db);
+  app.locals.sync = sync; // o server.js liga a agenda (os testes não)
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -952,6 +955,88 @@ function createApp(db, { testMode = false } = {}) {
     if (!cplugLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-cplug-${cplugLast.date}.json`);
     res.type('application/json').send(JSON.stringify(cplugLast, null, 1));
+  });
+
+  // ---------- admin: automação do CPlug (rotina, lojas, de-para) ----------
+  admin.get('/integracoes/cplug/automacao', (req, res) => {
+    res.json({
+      configured: sync.configured(),
+      auto: db.prepare("SELECT value FROM settings WHERE key = 'cplug_auto'").get()?.value !== '0',
+      running: sync.isRunning(),
+      runs: db.prepare("SELECT * FROM sync_runs WHERE source = 'cplug' ORDER BY id DESC LIMIT 15").all(),
+      stores: db.prepare(`SELECT s.*, l.name AS location_name, (SELECT MAX(date) FROM cplug_daily_totals t WHERE t.store_id = s.id) AS last_date
+        FROM int_stores s LEFT JOIN locations l ON l.id = s.location_id WHERE s.source = 'cplug' ORDER BY s.name`).all(),
+      locations: db.prepare("SELECT id, name FROM locations WHERE kind = 'loja' AND active = 1 ORDER BY name").all(),
+      products: db.prepare('SELECT status, COUNT(*) n FROM cplug_products GROUP BY status').all(),
+    });
+  });
+  admin.put('/integracoes/cplug/automacao', (req, res) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('cplug_auto', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(req.body?.auto ? '1' : '0');
+    res.json({ ok: true });
+  });
+  admin.post('/integracoes/cplug/buscar', async (req, res) => {
+    const date = T.isDate(String(req.body?.date || '')) ? String(req.body.date) : T.localDate();
+    const r = await sync.run([date], 'manual');
+    if (r.busy) throw new BusinessError('Já existe uma busca em andamento. Tente de novo em 1 minuto.', 409);
+    res.json({ run: r });
+  });
+  admin.put('/integracoes/lojas/:id', (req, res) => {
+    const id = idParam(req);
+    const loc = req.body?.location_id ? db.prepare("SELECT id FROM locations WHERE id = ? AND kind = 'loja'").get(Number(req.body.location_id)) : null;
+    if (req.body?.location_id && !loc) throw new BusinessError('Loja inválida.');
+    if (loc && db.prepare('SELECT 1 FROM int_stores WHERE location_id = ? AND id <> ? AND source = (SELECT source FROM int_stores WHERE id = ?)').get(loc.id, id, id)) {
+      throw new BusinessError('Essa loja já está ligada a outra empresa do CPlug.');
+    }
+    const r = db.prepare('UPDATE int_stores SET location_id = ? WHERE id = ?').run(loc ? loc.id : null, id);
+    if (!r.changes) throw new BusinessError('Loja não encontrada.', 404);
+    res.json({ ok: true });
+  });
+  admin.get('/integracoes/cplug/produtos', (req, res) => {
+    const st = ['pendente', 'sugerido', 'confirmado', 'ignorar'].includes(req.query.status) ? req.query.status : null;
+    res.json({
+      items: db.prepare(`SELECT c.*, p.name AS product_name,
+          (SELECT COALESCE(SUM(d.quantity), 0) FROM cplug_daily_products d WHERE d.code = c.code AND d.name = c.name) AS sold_qty
+        FROM cplug_products c LEFT JOIN products p ON p.id = c.product_id
+        ${st ? 'WHERE c.status = ?' : ''} ORDER BY CASE c.status WHEN 'pendente' THEN 0 WHEN 'sugerido' THEN 1 WHEN 'confirmado' THEN 2 ELSE 3 END, c.name`).all(...(st ? [st] : [])),
+      products: db.prepare('SELECT id, name, product_type, category FROM products WHERE active = 1 ORDER BY name').all(),
+    });
+  });
+  admin.put('/integracoes/cplug/produtos/:id', (req, res) => {
+    const id = idParam(req);
+    const status = req.body?.status === 'ignorar' ? 'ignorar' : 'confirmado';
+    const productId = status === 'ignorar' ? null : Number(req.body?.product_id) || null;
+    if (status === 'confirmado' && (!productId || !db.prepare('SELECT 1 FROM products WHERE id = ?').get(productId))) {
+      throw new BusinessError('Escolha o produto do cadastro.');
+    }
+    const r = db.prepare('UPDATE cplug_products SET product_id = ?, status = ? WHERE id = ?').run(productId, status, id);
+    if (!r.changes) throw new BusinessError('Item não encontrado.', 404);
+    res.json({ ok: true });
+  });
+  admin.post('/integracoes/cplug/produtos/confirmar-sugestoes', (req, res) => {
+    const r = db.prepare("UPDATE cplug_products SET status = 'confirmado' WHERE status = 'sugerido' AND product_id IS NOT NULL").run();
+    res.json({ confirmed: r.changes });
+  });
+
+  // ---------- admin: vendas das lojas (o que o CPlug guardou) ----------
+  admin.get('/lojas/vendas', (req, res) => {
+    const date = T.isDate(String(req.query.date || '')) ? String(req.query.date) : T.localDate();
+    const lastWeek = T.addDays(date, -7);
+    const stores = db.prepare(`SELECT s.id, s.name, s.cnpj, l.name AS location_name FROM int_stores s LEFT JOIN locations l ON l.id = s.location_id
+      WHERE s.source = 'cplug' AND s.active = 1 ORDER BY COALESCE(l.name, s.name)`).all().map((s) => {
+      const tot = db.prepare('SELECT * FROM cplug_daily_totals WHERE store_id = ? AND date = ?').get(s.id, date);
+      const prev = db.prepare('SELECT products_cents FROM cplug_daily_totals WHERE store_id = ? AND date = ?').get(s.id, lastWeek);
+      return {
+        ...s, date, total_cents: tot ? (tot.products_cents ?? tot.payments_cents ?? 0) : null, fetched_at: tot ? tot.fetched_at : null,
+        items: tot ? tot.item_count : 0, other_cents: tot ? tot.other_cents : 0, last_week_cents: prev ? prev.products_cents : null,
+        payments: db.prepare('SELECT method, value_cents FROM cplug_daily_payments WHERE store_id = ? AND date = ? ORDER BY value_cents DESC').all(s.id, date),
+        top: db.prepare(`SELECT d.name, d.quantity, d.value_cents, p.name AS product_name FROM cplug_daily_products d
+          LEFT JOIN cplug_products c ON c.code = d.code AND c.name = d.name AND c.status = 'confirmado' LEFT JOIN products p ON p.id = c.product_id
+          WHERE d.store_id = ? AND d.date = ? ORDER BY d.value_cents DESC LIMIT 10`).all(s.id, date),
+      };
+    });
+    const last = db.prepare("SELECT * FROM sync_runs WHERE source = 'cplug' ORDER BY id DESC LIMIT 1").get();
+    res.json({ date, stores, last_run: last || null });
   });
 
   // ---------- admin: integração com a Rede (maquininhas) — teste ----------

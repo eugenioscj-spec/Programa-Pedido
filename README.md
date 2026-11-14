@@ -48,6 +48,10 @@ Em **Integrações**, o sistema entra no CPlug com a conta cadastrada nas variá
 
 As credenciais nunca vão para o banco nem para a tela. O botão **Baixar diagnóstico** gera um arquivo com as páginas lidas (sem senha, usuário e códigos de segurança) para ajustar a leitura.
 
+### Rotina automática do CPlug
+
+Com as variáveis do CPlug no servidor, o sistema busca sozinho as vendas das lojas: **de hora em hora (8h às 23h)** o dia de hoje e, **a partir das 3h**, o fechamento de ontem (e de anteontem, se faltar). Guarda o retrato de cada dia por loja (por produto e por forma de pagamento), sem duplicar quando busca o mesmo dia de novo. Em **Integrações**: ligar/desligar a rotina, buscar um dia na hora, ver as últimas buscas, ligar cada empresa do CPlug à nossa loja e o **de-para** dos produtos (o sistema liga pelo nome os iguais e sugere os parecidos para confirmar). O painel **Vendas lojas** mostra o dia de cada loja: total, formas de pagamento, mais vendidos e comparação com o mesmo dia da semana anterior. Por enquanto nada é lançado na DRE, no caixa ou no estoque.
+
 ## Integração com a Rede (maquininhas, em teste)
 
 API oficial **Gestão de Vendas** da Rede (vendas de crédito e débito, recebíveis, pagamentos). Em **Integrações → Rede**, o teste busca as vendas de um dia de um estabelecimento (PV).

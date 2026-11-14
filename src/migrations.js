@@ -692,6 +692,80 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    version: 14,
+    name: 'Automação do CPlug: lojas, vendas do dia por produto e forma de pagamento, de-para e registro das buscas',
+    up(db) {
+      db.exec(`
+        -- Lojas dos sistemas de fora (CPlug: a empresa; Rede: o PV), ligadas às nossas lojas
+        CREATE TABLE IF NOT EXISTS int_stores (
+          id          INTEGER PRIMARY KEY,
+          source      TEXT NOT NULL,              -- 'cplug' | 'rede'
+          external_id TEXT NOT NULL,
+          name        TEXT,
+          cnpj        TEXT,
+          location_id INTEGER REFERENCES locations(id),
+          active      INTEGER NOT NULL DEFAULT 1,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (source, external_id)
+        );
+        -- Retrato do dia de cada loja (refeito a cada busca daquele dia)
+        CREATE TABLE IF NOT EXISTS cplug_daily_products (
+          store_id    INTEGER NOT NULL REFERENCES int_stores(id),
+          date        TEXT NOT NULL,
+          code        TEXT NOT NULL DEFAULT '',
+          name        TEXT NOT NULL,
+          quantity    REAL,
+          value_cents INTEGER NOT NULL,
+          PRIMARY KEY (store_id, date, code, name)
+        );
+        CREATE TABLE IF NOT EXISTS cplug_daily_payments (
+          store_id      INTEGER NOT NULL REFERENCES int_stores(id),
+          date          TEXT NOT NULL,
+          method        TEXT NOT NULL,
+          value_cents   INTEGER NOT NULL,
+          returns_cents INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (store_id, date, method)
+        );
+        CREATE TABLE IF NOT EXISTS cplug_daily_totals (
+          store_id       INTEGER NOT NULL REFERENCES int_stores(id),
+          date           TEXT NOT NULL,
+          products_cents INTEGER,
+          other_cents    INTEGER NOT NULL DEFAULT 0,
+          payments_cents INTEGER,
+          item_count     INTEGER NOT NULL DEFAULT 0,
+          fetched_at     TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (store_id, date)
+        );
+        -- De-para: produto do CPlug (código + nome) → produto do nosso cadastro
+        CREATE TABLE IF NOT EXISTS cplug_products (
+          id         INTEGER PRIMARY KEY,
+          code       TEXT NOT NULL DEFAULT '',
+          name       TEXT NOT NULL,
+          product_id INTEGER REFERENCES products(id),
+          status     TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'sugerido', 'confirmado', 'ignorar')),
+          score      REAL,
+          first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen  TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (code, name)
+        );
+        -- Registro de cada busca automática ou manual
+        CREATE TABLE IF NOT EXISTS sync_runs (
+          id          INTEGER PRIMARY KEY,
+          source      TEXT NOT NULL,
+          kind        TEXT NOT NULL,              -- 'hoje' | 'fechamento' | 'manual'
+          dates       TEXT NOT NULL,
+          started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          finished_at TEXT,
+          status      TEXT NOT NULL DEFAULT 'rodando' CHECK (status IN ('rodando', 'ok', 'parcial', 'erro')),
+          message     TEXT,
+          stores      INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_runs ON sync_runs(source, started_at);
+      `);
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cplug_auto', '1')").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
