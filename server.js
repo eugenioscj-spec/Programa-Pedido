@@ -40,6 +40,8 @@ require('./src/recurring').createRecurring(db).generate();
 
 // Inventário pendente (contagem de 13/11/2026): entra depois que o catálogo existe.
 require('./src/migrations').applyPendingInventory(db);
+// Transferência pendente para a Loja 2 (14/11/2026).
+require('./src/migrations').applyPendingTransfer(db);
 
 // MODO_TESTE=sim: só mostra a faixa "Ambiente de teste". Não lança mais dados de exemplo
 // online; para isso use o "Testar no Windows/Mac" no próprio computador.

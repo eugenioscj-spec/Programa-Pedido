@@ -8,7 +8,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Render (plano pago, com disco `/data`, `DB_PATH=/data/oggi.db`). Publica sozinho a cada push na branch
   **`claude/oggi-sorvetes-b2b-ordering-lbo3ri`** (é nela que se trabalha; não há PR).
 - Node 22, Express 5, better-sqlite3, front-end em JS puro (`public/`). Testes: `npm test` (node:test) — rodar antes de enviar.
-- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 14.
+- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 15.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
   `REDE_CLIENT_ID/SECRET`, `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
@@ -19,6 +19,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Loja 2 = "MT SINOP RESIDENCIAL BURITIS" (CNPJ 63.532.954/0002-46, PV 107531038, filial). Loja 2 também é cliente B2B
   (sem conta a receber; no futuro o pedido dela vira transferência). Confirmar a correspondência com o dono se surgir dúvida.
 - Estoque da câmara: inventário físico de 13/11/2026 (880 caixas) sem custo — custo a informar. Top Hit 33/cx, Açaí 200g 12/cx.
+  Transferência câmara → Loja 2 de 14/11/2026 (lista à mão, 109 caixas) lançada pela migração 15.
 - B2B: pedido entregue vira conta a receber em entrega + 30 dias + 1 dia útil (prazo por cliente).
 - Excluir pedido (inclusive entregue): só quem tem `can_delete_orders` (o dono). Desfaz estoque por estorno, apaga a conta a receber.
 - CPlug: robô pelo login (o CPlug respeita "Aguarde N segundos"; dados vêm em listas `"data": [...]` das DataTables).

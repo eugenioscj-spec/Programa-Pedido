@@ -181,6 +181,60 @@ const INVENTORY_2026_11_13 = [
   ['OG26-DUETTO-MOUSSE-MARACUJA', 8], // Pote Duetto Mousse de Maracujá
 ];
 
+// Transferência da câmara para a Loja 2 em 14/11/2026 (lista escrita à mão, conferida pelo dono em 16/11/2026).
+// [sku, caixas]. Zerados na lista (Gwen, Minnie, potes Hello Kitty, Manga, Coco Queimado, Sensa Bombom Açaí) ficam de fora.
+const TRANSFER_LOJA2_2026_11_14 = [
+  ['OG26-DISNEY-UVA', 1], // Ariel
+  ['OG26-DISNEY-IOGURTE-MORANGO', 3], // Homem-Aranha
+  ['OG26-DISNEY-MORANGO-BAUNILHA', 2], // Jessie
+  ['OG26-DISNEY-LEITE-CACAU', 3], // Mickey
+  ['OG26-HK-PINTA-LINGUA', 2],
+  ['OG26-HK-TUTTI-FRUTTI', 2],
+  ['OG26-FESTA-FRUTAS-VERMELHAS', 5],
+  ['OG26-FESTA-GROSELHA', 6],
+  ['OG26-FESTA-MELANCIA', 1],
+  ['OG26-FESTA-IOGURTE', 4],
+  ['OG26-FESTA-LEITE-CONDENSADO', 5],
+  ['OG26-FESTA-ACHOCOLATADO', 1],
+  ['OG26-FRUTOS-ABACAXI', 1],
+  ['OG26-FRUTOS-ACAI', 5],
+  ['OG26-FRUTOS-GOIABA', 1],
+  ['OG26-FRUTOS-LIMAO', 3],
+  ['OG26-FRUTOS-MORANGO', 1],
+  ['OG26-FRUTOS-UVA', 6],
+  ['OG26-REGIONAIS-TAPIOCA', 3],
+  ['OG26-REGIONAIS-CAJA', 1],
+  ['OG26-REGIONAIS-CAJU', 1],
+  ['OG26-REGIONAIS-CUPUACU', 2],
+  ['OG26-REGIONAIS-GRAVIOLA', 1],
+  ['OG26-FAZENDA-COCO', 1],
+  ['OG26-FAZENDA-AMENDOIM', 1],
+  ['OG26-FAZENDA-DOCE-DE-LEITE', 2],
+  ['OG26-FAZENDA-MILHO-VERDE', 2],
+  ['OG26-DELICIA-ABACAXI-VINHO', 2],
+  ['OG26-DELICIA-MOUSSE-MARACUJA', 3],
+  ['OG26-DELICIA-CHOCOLATE', 2],
+  ['OG26-DELICIA-IOGURTE-FRUTAS-VERMELHAS', 2],
+  ['OG26-DELICIA-BEIJINHO', 1],
+  ['OG26-DELICIA-TORTA-LIMAO', 4],
+  ['OG26-DELICIA-QUEIJO-GOIABADA', 1],
+  ['OG26-CLASSICOS-BOMBOM', 6],
+  ['OG26-CLASSICOS-BRIGADEIRO', 6],
+  ['OG26-SENSA-CHOCO-AMENDOIM', 1],
+  ['OG26-SENSA-BRIGADEIRO', 1],
+  ['OG26-SENSA-CHOCOLATE-BRANCO', 2],
+  ['OG26-SENSA-CLASSICO', 1],
+  ['OG26-SENSA-FRUTAS-VERMELHAS', 3],
+  ['OG26-SENSA-MEIO-AMARGO', 2],
+  ['OG26-SENSA-CHOCO-MENTA', 1],
+  ['OG26-SUNDAE-CHOCOLATE', 1],
+  ['OG26-SUNDAE-MORANGO', 1],
+  ['OG26-GIRATTO-AVELA-TRUFADO', 1],
+  ['OG26-GIRATTO-CROCANTE', 1],
+  ['OG26-GIRATTO-LEITE-TRUFADO', 1],
+  ['OG26-SENSA-BOMBOM-CLASSICO', 1],
+];
+
 const MIGRATIONS = [
   {
     version: 2,
@@ -766,6 +820,14 @@ const MIGRATIONS = [
       db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('cplug_auto', '1')").run();
     },
   },
+  {
+    version: 15,
+    name: 'Transferência da câmara para a Loja 2 em 14/11/2026 (lista conferida pelo dono)',
+    up(db) {
+      // Entra logo depois de o sistema iniciar (applyPendingTransfer), com produtos e inventário já lançados.
+      db.prepare("INSERT INTO settings (key, value) VALUES ('pending_transfer_loja2', '2026-11-14') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -809,6 +871,38 @@ function applyPendingInventory(db, { log = console.log } = {}) {
   return { products, units, missing };
 }
 
+// Lança a transferência pendente (migração 15): saída da câmara do tipo "transferencia" para a Loja 2,
+// com data de 14/11/2026 (12h em Cuiabá). Tudo ou nada: se faltar estoque de algum item, não lança e avisa.
+function applyPendingTransfer(db, { log = console.log } = {}) {
+  const pending = db.prepare("SELECT value FROM settings WHERE key = 'pending_transfer_loja2'").get();
+  if (!pending || pending.value !== '2026-11-14') return null;
+  if (db.prepare("SELECT value FROM settings WHERE key = 'pending_inventory'").get()) return null; // inventário antes
+  const loc = db.prepare("SELECT id FROM locations WHERE name = 'Loja 2' AND kind = 'loja'").get();
+  if (!loc) { log('Transferência de 14/11 para a Loja 2: loja não encontrada.'); return null; }
+  const lines = [];
+  const missing = [];
+  for (const [sku, boxes] of TRANSFER_LOJA2_2026_11_14) {
+    const p = db.prepare('SELECT id, units_per_box FROM products WHERE sku = ?').get(sku);
+    if (!p) { missing.push(sku); continue; }
+    lines.push({ product_id: p.id, units: boxes * p.units_per_box });
+  }
+  if (!lines.length) return null;
+  const { createInventory } = require('./inventory');
+  try {
+    const results = createInventory(db).dispatch({
+      type: 'transferencia', lines, locationId: loc.id, at: '2026-11-14 16:00:00',
+      note: 'Reposição da Loja 2 de 14/11/2026 (lista em caixas)', user: 'Eugenio',
+    });
+    db.prepare("DELETE FROM settings WHERE key = 'pending_transfer_loja2'").run();
+    const units = results.reduce((s, r) => s - r.quantity, 0);
+    log(`Transferência de 14/11/2026 para a Loja 2 lançada: ${results.length} produto(s), ${units} unidades.${missing.length ? ` Sem cadastro: ${missing.join(', ')}` : ''}`);
+    return { products: results.length, units, missing };
+  } catch (e) {
+    log(`Transferência de 14/11/2026 para a Loja 2 NÃO lançada: ${e.message}`);
+    return { error: e.message };
+  }
+}
+
 function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = {}) {
   let version = currentVersion(db);
   const pending = MIGRATIONS.filter((m) => m.version > version && m.version <= upTo);
@@ -844,4 +938,4 @@ function runMigrations(db, file, { log = console.log, upTo = LATEST_VERSION } = 
   return { from, to: version, backup };
 }
 
-module.exports = { runMigrations, applyPendingInventory, INVENTORY_2026_11_13, LATEST_VERSION, LOJA2, TEST_BARCODES, ORDER_DELETER_EMAIL, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
+module.exports = { runMigrations, applyPendingInventory, applyPendingTransfer, INVENTORY_2026_11_13, TRANSFER_LOJA2_2026_11_14, LATEST_VERSION, LOJA2, TEST_BARCODES, ORDER_DELETER_EMAIL, MOVEMENT_TYPES, MIGRATED_REASON, NONSALE_TYPES, FIN_ACCOUNTS };
