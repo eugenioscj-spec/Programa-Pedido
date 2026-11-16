@@ -25,6 +25,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Rotina: de hora em hora 8h–23h (hoje) e a partir das 3h (fechamento de ontem/anteontem); só GUARDA (cplug_daily_*).
   De-para dos produtos confirmado pelo dono (14/11/2026).
 - Rede: API oficial Gestão de Vendas; sandbox funcionando; produção pedida por e-mail (ecommerce@userede.com.br) em 14/11/2026.
+  Chamado da Rede RITM8284863 aberto em 16/11/2026 (prazo de até 3 dias úteis; Suporte E-Commerce Rede 3003 0603 / 0800 723 0603).
   Bandeira vem como código (brandCode) — confirmar a tabela com comprovantes reais.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
@@ -32,7 +33,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 ## Pendências (lembrar o dono; apagar daqui quando resolver)
 1. Receita das lojas na DRE: o dono quer separar venda loja × B2B e conferir com o CPlug antes de ligar o lançamento automático.
 2. Pix das lojas: confirmar se cai no mesmo dia e em qual banco.
-3. Taxas de cartão: lançar só quando a Rede liberar a produção (aí: REDE_AMBIENTE=producao, REDE_PVS, credenciais novas).
+3. Taxas de cartão: lançar só quando a Rede liberar a produção (chamado RITM8284863; aí: REDE_AMBIENTE=producao, REDE_PVS, credenciais novas).
 4. CMV das lojas pelo produto vendido (hoje: mercadoria enviada às lojas a custo) — pendência futura.
 5. Estoque de cada loja: o dono vai fazer inventário das lojas; depois criar estoque por loja (transferência entra, venda do CPlug sai).
 6. Custo do estoque da câmara (inventário de 13/11 entrou sem custo).
