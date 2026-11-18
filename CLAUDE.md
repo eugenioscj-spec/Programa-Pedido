@@ -28,9 +28,12 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Rede: API oficial Gestão de Vendas; sandbox funcionando; produção pedida por e-mail (ecommerce@userede.com.br) em 14/11/2026.
   Chamado da Rede RITM8284863 aberto em 16/11/2026 (prazo de até 3 dias úteis; Suporte E-Commerce Rede 3003 0603 / 0800 723 0603).
   18/11/2026: a Rede gerou as credenciais de PRODUÇÃO (Gestão de Acessos + Gestão de Vendas; enviadas ao e-mail do dono).
-  Falta: Opt-in = o NOSSO sistema envia pela API Gestão de Acessos a "Solicitação de Acesso ao Extrato" de cada PV; em até 1 h
-  aparece no portal da Rede (perfil master: ícone da loja → Minha Rede → PV → Conciliação → "Compartilhar"). Só depois a
-  Gestão de Vendas responde. developer.userede.com.br é bloqueado neste ambiente: pedir ao dono o PDF da documentação.
+  Login de produção OK (grant password; escopo "feature_merchant_statement merchant-statement"); vendas davam 403
+  "Partner not allowed for this company number" = falta o Opt-in. Opt-in em `src/rede-optin.js` (Integrações → Rede):
+  POST /partner/v1/organizations/requests/features/merchant-statement (corpo montado lendo o swagger.yaml oficial na hora;
+  campo obrigatório desconhecido = não envia), GET .../requests/{requestId}/features/merchant-statement (situação).
+  Pedido TOTAL pela matriz 107468247. Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
+  developer.userede.com.br é bloqueado NESTE ambiente (o Render acessa).
   Bandeira vem como código (brandCode) — confirmar a tabela com comprovantes reais.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).

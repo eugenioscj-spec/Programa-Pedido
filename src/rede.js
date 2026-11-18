@@ -158,4 +158,4 @@ async function fetchSales({ date, pv, env = process.env, fetchImpl = fetch } = {
   return out;
 }
 
-module.exports = { fetchSales, config, findList, summarizeSale, totals, SANDBOX_PVS, RedeError };
+module.exports = { fetchSales, config, findList, summarizeSale, totals, getToken, call, SANDBOX_PVS, RedeError };

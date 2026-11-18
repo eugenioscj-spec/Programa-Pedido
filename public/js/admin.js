@@ -1753,7 +1753,9 @@ async function renderRedeCard() {
       <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${r ? '' : 'hidden'}" href="/api/admin/integracoes/rede/diagnostico">Baixar diagnóstico</a></div>
     </div>
     ${st.ambiente === 'sandbox' ? '<p class="small muted" style="margin:0">No teste, use um dos PVs fictícios da Rede (13381369 ou 22523510) e um dia em que o ambiente de teste tenha vendas: se vier vazio, o diagnóstico mostra o que a Rede respondeu.</p>' : ''}
-    <div id="rd-result" style="margin-top:12px">${r ? redeResult(r) : ''}</div>`;
+    <div id="rd-result" style="margin-top:12px">${r ? redeResult(r) : ''}</div>
+    <div id="rd-optin" style="margin-top:16px"></div>`;
+  renderRedeOptin(ok);
   $('#rd-pv').addEventListener('change', (e) => { RD.pv = e.target.value; });
   $('#rd-date').addEventListener('change', (e) => { RD.date = e.target.value; });
   const btn = $('#btn-rd-test');
@@ -1767,6 +1769,50 @@ async function renderRedeCard() {
     }
     renderRedeCard();
   }));
+}
+
+// Opt-in: pedido de acesso aos extratos (a Rede só libera as vendas depois que o dono aprova no portal).
+let OPTIN_RESULT = null;
+async function renderRedeOptin(ok) {
+  const box = $('#rd-optin');
+  if (!box) return;
+  const o = await api('/api/admin/integracoes/rede/optin');
+  const r = OPTIN_RESULT;
+  box.innerHTML = `
+    <h3 style="margin:0 0 6px">Acesso aos extratos (Opt-in)</h3>
+    <p class="small muted" style="margin-top:0">Se o teste acima disser <em>"Partner not allowed"</em>, a Rede ainda não liberou os extratos para o sistema.
+      1) Clique em <strong>Pedir acesso</strong> (vai em nome da matriz ${esc(o.matriz || '—')}, tipo <strong>total</strong>: matriz e todas as filiais).
+      2) Em até 1 hora, no <strong>portal da Rede</strong> com o perfil master: ícone da loja → <strong>Minha Rede</strong> → escolha o PV → <strong>Conciliação</strong> → <strong>Compartilhar</strong>.
+      3) Clique em <strong>Consultar situação</strong> até aparecer Aprovado e teste a conexão de novo.</p>
+    <div class="row">
+      <div class="field"><label>&nbsp;</label><button id="btn-optin" ${ok && o.matriz ? '' : 'disabled'}>Pedir acesso aos extratos</button></div>
+      <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${o.has_diagnostic ? '' : 'hidden'}" href="/api/admin/integracoes/rede/optin/diagnostico">Baixar diagnóstico do pedido</a></div>
+    </div>
+    ${r ? (r.error ? `<div class="alert alert-error small"><strong>Não deu certo:</strong> ${esc(r.error)}</div>`
+      : `<div class="alert alert-ok small">${r.request_id ? `Pedido feito (nº ${esc(r.request_id)})` : 'Consulta feita'}: ${esc(r.status_label || r.status || 'enviado')}.</div>`) : ''}
+    ${o.requests.length ? `<div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Matriz</th><th>Tipo</th><th>Feito em</th><th>Situação</th><th></th></tr></thead><tbody>
+      ${o.requests.map((x) => `<tr><td class="mono small">${esc(x.request_id ?? '—')}</td><td>${esc(x.matriz)}</td><td>${x.tipo === 'PARCIAL' ? 'Parcial' : 'Total'}</td>
+        <td class="small">${fmtDate(x.created_at)}</td><td>${esc(x.status_label)}${x.checked_at ? `<div class="small muted">consultado ${fmtDate(x.checked_at)}</div>` : ''}</td>
+        <td>${x.request_id ? `<button class="btn-secondary btn-sm" data-optin-check="${esc(x.request_id)}">Consultar situação</button>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}`;
+  const btn = $('#btn-optin');
+  btn.addEventListener('click', () => guard(async () => {
+    const pending = o.requests.find((x) => /Pendente/.test(x.status_label));
+    if (pending && !confirm(`Já existe um pedido pendente (nº ${pending.request_id}). Fazer outro mesmo assim?`)) return;
+    btn.disabled = true;
+    btn.textContent = 'Enviando à Rede…';
+    try {
+      OPTIN_RESULT = await api('/api/admin/integracoes/rede/optin', { method: 'POST', body: { tipo: 'TOTAL' } });
+    } finally {
+      btn.disabled = false;
+    }
+    renderRedeOptin(ok);
+  }));
+  box.querySelectorAll('[data-optin-check]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    b.disabled = true;
+    OPTIN_RESULT = await api(`/api/admin/integracoes/rede/optin/${encodeURIComponent(b.dataset.optinCheck)}/consultar`, { method: 'POST' });
+    renderRedeOptin(ok);
+  })));
 }
 
 function redeResult(r) {

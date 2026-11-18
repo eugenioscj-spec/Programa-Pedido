@@ -22,6 +22,7 @@ const { createCrm } = require('./crm');
 const { createAnalytics } = require('./analytics');
 const cplug = require('./cplug');
 const rede = require('./rede');
+const redeOptin = require('./rede-optin');
 const { createSync } = require('./sync');
 const T = require('./time');
 const U = require('./util');
@@ -1060,6 +1061,42 @@ function createApp(db, { testMode = false } = {}) {
     if (!redeLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-rede-${redeLast.date}.json`);
     res.type('application/json').send(JSON.stringify(redeLast, null, 1));
+  });
+
+  // ---------- admin: Rede — Opt-in (pedido de acesso aos extratos) ----------
+  const optinList = () => { try { return JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'rede_optin'").get()?.value || '[]'); } catch { return []; } };
+  const optinSave = (list) => db.prepare("INSERT INTO settings (key, value) VALUES ('rede_optin', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(JSON.stringify(list.slice(0, 30)));
+  let optinLast = null;
+  admin.get('/integracoes/rede/optin', (req, res) => {
+    const c = rede.config();
+    res.json({ matriz: c.ambiente === 'sandbox' ? rede.SANDBOX_PVS[0] : (c.pvs[0] || ''), filiais: c.ambiente === 'sandbox' ? [] : c.pvs.slice(1),
+      requests: optinList().map((x) => ({ ...x, status_label: redeOptin.statusLabel(x.status) })), has_diagnostic: !!optinLast });
+  });
+  admin.post('/integracoes/rede/optin', async (req, res) => {
+    const c = rede.config();
+    const matriz = String(req.body?.matriz || c.pvs[0] || '').replace(/\D/g, '');
+    const tipo = req.body?.tipo === 'PARCIAL' ? 'PARCIAL' : 'TOTAL';
+    const filiais = tipo === 'PARCIAL' ? c.pvs.filter((p) => p !== matriz) : [];
+    optinLast = await redeOptin.requestAccess({ matriz, tipo, filiais });
+    if (!optinLast.error) {
+      optinSave([{ request_id: optinLast.request_id, matriz, tipo, status: optinLast.status, created_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
+        checked_at: null, ambiente: optinLast.ambiente }, ...optinList()]);
+    }
+    res.json({ ...optinLast, log: undefined, docs: undefined });
+  });
+  admin.post('/integracoes/rede/optin/:id/consultar', async (req, res) => {
+    const id = String(req.params.id);
+    optinLast = await redeOptin.checkAccess({ requestId: id });
+    if (!optinLast.error) {
+      optinSave(optinList().map((x) => (String(x.request_id) === id ? { ...x, status: optinLast.status, checked_at: new Date().toISOString().slice(0, 19).replace('T', ' ') } : x)));
+    }
+    res.json({ ...optinLast, log: undefined, status_label: redeOptin.statusLabel(optinLast.status) });
+  });
+  admin.get('/integracoes/rede/optin/diagnostico', (req, res) => {
+    if (!optinLast) throw new BusinessError('Faça o pedido (ou a consulta) antes.');
+    res.attachment('diagnostico-rede-optin.json');
+    res.type('application/json').send(JSON.stringify(optinLast, null, 1));
   });
 
   // ---------- admin: análises do negócio ----------
