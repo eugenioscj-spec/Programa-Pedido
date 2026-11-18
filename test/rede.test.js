@@ -61,3 +61,34 @@ test('Rede: totais só das aprovadas, canceladas à parte, por modalidade (forma
   assert.equal(t.by_modality.DEBIT.gross_cents, 14800);
   assert.equal(summarizeSale(sale(10, 1, 'DEBIT')).brand, 'código 1');
 });
+
+test('Rede: com REDE_USUARIO/REDE_SENHA usa o grant "password"; se recusar, tenta client_credentials', async (t) => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      const json = (status, b) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(b)); };
+      if (req.url === '/oauth/token') {
+        const p = new URLSearchParams(body);
+        seen.push(p.get('grant_type'));
+        if (p.get('grant_type') === 'password' && p.get('username') === 'loja@x' && p.get('password') === 'p&ss=1') return json(200, { access_token: 'tok-pw' });
+        return json(401, { error: 'invalid_grant' });
+      }
+      if (req.headers.authorization !== 'Bearer tok-pw') return json(401, {});
+      return json(200, { content: { transactions: [] } });
+    });
+  });
+  await new Promise((r) => server.listen(0, r));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const env = { REDE_CLIENT_ID: 'id', REDE_CLIENT_SECRET: 's', REDE_USUARIO: 'loja@x', REDE_SENHA: 'p&ss=1', REDE_BASE_URL: base, REDE_TOKEN_URL: `${base}/oauth/token` };
+  const r = await fetchSales({ date: '2026-11-18', pv: '107468247', env });
+  assert.equal(r.error, undefined);
+  assert.deepEqual(seen, ['password']);
+  assert.ok(!JSON.stringify(r.log).includes('p&ss=1'), 'a senha não vai para o diagnóstico');
+  seen.length = 0;
+  const bad = await fetchSales({ date: '2026-11-18', pv: '1', env: { ...env, REDE_SENHA: 'errada' } });
+  assert.deepEqual(seen, ['password', 'client_credentials']);
+  assert.match(bad.error, /recusou as credenciais/);
+});

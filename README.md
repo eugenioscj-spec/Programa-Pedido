@@ -59,6 +59,7 @@ API oficial **Gestão de Vendas** da Rede (vendas de crédito e débito, recebí
 | Variável (Render → Environment) | O que colocar |
 |---|---|
 | `REDE_CLIENT_ID` / `REDE_CLIENT_SECRET` | As credenciais do projeto "Gestão de Vendas" no portal de desenvolvedores da Rede |
+| `REDE_USUARIO` / `REDE_SENHA` | (produção) usuário e senha que a Rede manda junto com as credenciais de produção |
 | `REDE_AMBIENTE` | Vazio ou `sandbox` = teste (dados fictícios; PVs 13381369 e 22523510). `producao` quando a Rede liberar |
 | `REDE_PVS` | (produção) números dos estabelecimentos das lojas, separados por vírgula |
 

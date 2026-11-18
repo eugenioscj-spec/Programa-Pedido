@@ -25,6 +25,7 @@ function config(env = process.env) {
   const ambiente = env.REDE_AMBIENTE === 'producao' ? 'producao' : 'sandbox';
   return {
     ambiente, clientId: env.REDE_CLIENT_ID, clientSecret: env.REDE_CLIENT_SECRET,
+    usuario: env.REDE_USUARIO, senha: env.REDE_SENHA,
     base: env.REDE_BASE_URL || ENVS[ambiente].base, tokenUrl: env.REDE_TOKEN_URL || ENVS[ambiente].token,
     pvs: String(env.REDE_PVS || '').split(/[,;\s]+/).filter(Boolean),
   };
@@ -44,22 +45,27 @@ async function call(fetchImpl, url, opts, log) {
   return { status: res.status, body };
 }
 
-// Token OAuth 2.0 (client credentials: Client ID e Secret no cabeçalho Basic).
+// Token OAuth 2.0. Com REDE_USUARIO e REDE_SENHA (credenciais de produção vêm com usuário e senha): grant "password";
+// sem eles, ou se a Rede recusar, "client_credentials". Client ID e Secret sempre no cabeçalho Basic.
 async function getToken(cfg, fetchImpl, log) {
   if (!cfg.clientId || !cfg.clientSecret) throw new RedeError('Faltam as variáveis REDE_CLIENT_ID e REDE_CLIENT_SECRET no servidor.');
   const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64');
-  const r = await call(fetchImpl, cfg.tokenUrl, {
-    method: 'POST',
-    headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-    body: 'grant_type=client_credentials',
-  }, log);
-  const token = r.body && (r.body.access_token || r.body.accessToken);
-  if (r.status >= 400 || !token) {
-    throw new RedeError(r.status === 401 || r.status === 403
-      ? 'A Rede recusou as credenciais (Client ID / Client Secret). Confira as variáveis no Render e o ambiente (sandbox ou produção).'
-      : `A Rede não devolveu o token de acesso (resposta ${r.status}).`);
+  const grants = [];
+  if (cfg.usuario && cfg.senha) grants.push(new URLSearchParams({ grant_type: 'password', username: cfg.usuario, password: cfg.senha }).toString());
+  grants.push('grant_type=client_credentials');
+  let r;
+  for (const body of grants) {
+    r = await call(fetchImpl, cfg.tokenUrl, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${basic}`, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body,
+    }, log);
+    const token = r.body && (r.body.access_token || r.body.accessToken);
+    if (r.status < 400 && token) return token;
   }
-  return token;
+  throw new RedeError(r.status === 400 || r.status === 401 || r.status === 403
+    ? 'A Rede recusou as credenciais (Client ID / Secret / usuário / senha). Confira as variáveis no Render e o ambiente (sandbox ou produção).'
+    : `A Rede não devolveu o token de acesso (resposta ${r.status}).`);
 }
 
 // Lista de vendas dentro da resposta, qualquer que seja o nome do campo (content, sales, transactions…).

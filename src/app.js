@@ -1044,7 +1044,7 @@ function createApp(db, { testMode = false } = {}) {
   admin.get('/integracoes/rede', (req, res) => {
     const c = rede.config();
     res.json({
-      configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret }, ambiente: c.ambiente,
+      configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret, usuario: !!c.usuario, senha: !!c.senha }, ambiente: c.ambiente,
       pvs: c.ambiente === 'sandbox' ? rede.SANDBOX_PVS : c.pvs,
       last: redeLast && { ...redeLast, log: undefined },
     });

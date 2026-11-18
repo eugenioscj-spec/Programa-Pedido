@@ -11,7 +11,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 15.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
-  `REDE_CLIENT_ID/SECRET`, `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
+  `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
 
 ## Decisões já tomadas (não mudar sem perguntar)
 - Regra do dono: não decidir sozinho nada que mude números contábeis; planejar e esperar o OK.

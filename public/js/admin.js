@@ -1744,7 +1744,7 @@ async function renderRedeCard() {
     <h2 style="margin-top:0">Rede (maquininhas de cartão)</h2>
     <p class="small muted">API oficial de Gestão de Vendas da Rede. Ambiente atual: <strong>${st.ambiente === 'producao' ? 'produção (lojas reais)' : 'teste (sandbox, dados fictícios da Rede)'}</strong>.
       Por enquanto é só um teste: nada é lançado.</p>
-    <ul class="small" style="padding-left:18px">${flag(st.configured.client_id, 'REDE_CLIENT_ID')}${flag(st.configured.client_secret, 'REDE_CLIENT_SECRET')}</ul>
+    <ul class="small" style="padding-left:18px">${flag(st.configured.client_id, 'REDE_CLIENT_ID')}${flag(st.configured.client_secret, 'REDE_CLIENT_SECRET')}${st.ambiente === 'producao' ? flag(st.configured.usuario, 'REDE_USUARIO') + flag(st.configured.senha, 'REDE_SENHA') : ''}</ul>
     <div class="row">
       <div class="field"><label>Estabelecimento (PV)</label><input id="rd-pv" inputmode="numeric" value="${esc(RD.pv)}" list="rd-pvs" style="max-width:180px">
         <datalist id="rd-pvs">${st.pvs.map((p) => `<option value="${esc(p)}">`).join('')}</datalist></div>
