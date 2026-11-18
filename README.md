@@ -60,6 +60,9 @@ API oficial **Gestão de Vendas** da Rede (vendas de crédito e débito, recebí
 |---|---|
 | `REDE_CLIENT_ID` / `REDE_CLIENT_SECRET` | As credenciais do projeto "Gestão de Vendas" no portal de desenvolvedores da Rede |
 | `REDE_USUARIO` / `REDE_SENHA` | (produção) usuário e senha que a Rede manda junto com as credenciais de produção |
+| `ITAU_CLIENT_ID` / `ITAU_CLIENT_SECRET` | Credencial de produção criada no Itaú for Developers (aplicação com a API de Extrato) |
+| `ITAU_CONTAS` | Conta(s) Itaú no formato agência/conta-dígito, ex.: `1500/0012345-6` (várias separadas por vírgula) |
+| Secret Files `itau.crt` e `itau.key` | Certificado dinâmico do Itaú (vale 365 dias; o sistema avisa 30 dias antes) |
 | `REDE_AMBIENTE` | Vazio ou `sandbox` = teste (dados fictícios; PVs 13381369 e 22523510). `producao` quando a Rede liberar |
 | `REDE_PVS` | (produção) números dos estabelecimentos das lojas, separados por vírgula |
 

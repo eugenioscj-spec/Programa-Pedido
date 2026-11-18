@@ -11,7 +11,8 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 15.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
-  `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
+  `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `ITAU_CLIENT_ID/SECRET`, `ITAU_CONTAS`
+  (agência/conta-dígito) + Secret Files `itau.crt`/`itau.key`, `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
 
 ## Decisões já tomadas (não mudar sem perguntar)
 - Regra do dono: não decidir sozinho nada que mude números contábeis; planejar e esperar o OK.
@@ -38,6 +39,12 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Bandeira vem como código (brandCode: na Loja 2 em 16/11 apareceram 1, 2 e 14) — confirmar a tabela com comprovantes reais.
   Loja 2 (PV 107531038) funciona; Loja 1 sem vendas (mudando de ponto). Rede só traz até o dia ANTERIOR (D-1).
   Algumas vendas de crédito têm desconto ~2% além do MDR (bruto − líquido − mdrAmount; antecipação?) = other_cents: confirmar.
+- Itaú (18/11/2026): API oficial "Account Statement" (`src/itau.js`, `src/itau-sync.js`; Integrações → Itaú). mTLS com
+  certificado dinâmico (autosserviço no Itaú for Developers: criar aplicação com Extrato → credencial Produção → pedir
+  aprovação → Owner aprova no Bankline em até 7 dias → emitir em até 72 h e baixar .crt/.key; vale 365 dias, renova 30 dias
+  antes). Token STS client_credentials (~5 min). Extrato grava em bank_transactions (mesma conciliação do OFX); `insertNew`
+  no bank.js evita duplicar OFX × API por dia+valor. Rotina: a cada 3 h, 6h–22h, últimos 7 dias (setting itau_auto).
+  Aguardando o dono emitir a credencial/certificado e cadastrar no Render.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
 

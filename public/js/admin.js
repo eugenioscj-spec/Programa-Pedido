@@ -1712,8 +1712,10 @@ async function renderIntegrations() {
       <p class="small muted" style="margin:0">O diagnóstico traz as páginas que o sistema leu, sem senha, usuário nem códigos de segurança. Se algo não aparecer certo, mande o arquivo para o Claude.</p>
     </div>
     <div id="int-result">${r ? integrationResult(r) : ''}</div>
-    <div class="card" id="rede-card"><div class="empty">Carregando…</div></div>`;
+    <div class="card" id="rede-card"><div class="empty">Carregando…</div></div>
+    <div class="card" id="itau-card"><div class="empty">Carregando…</div></div>`;
   renderRedeCard();
+  renderItauCard();
   renderAutoCard();
   $('#int-date').addEventListener('change', (e) => { INT.date = e.target.value; });
   const btn = $('#btn-int-test');
@@ -1726,6 +1728,58 @@ async function renderIntegrations() {
       btn.disabled = false;
     }
     renderIntegrations();
+  }));
+}
+
+// Itaú: extrato e saldo pela API oficial (certificado + credencial). Grava em Financeiro → Bancos.
+let ITAU_RESULT = null;
+async function renderItauCard() {
+  const box = $('#itau-card');
+  if (!box) return;
+  const st = await api('/api/admin/integracoes/itau');
+  const c = st.certificate || {};
+  const flag = (v, label, extra = '') => `<li>${v ? '✅' : '❌'} ${label}${extra}</li>`;
+  const certLine = c.cert_found
+    ? (c.valid_to ? ` — vale até <strong>${fmtDate(c.valid_to, false)}</strong>${c.days_left <= 30 ? ` <span class="qty-neg"><strong>(faltam ${c.days_left} dias: renove no Itaú for Developers!)</strong></span>` : ` (faltam ${c.days_left} dias)`}` : ` — ${esc(c.cert_error || '')}`)
+    : ' <strong>faltando</strong> (Secret File itau.crt)';
+  const ready = st.configured.client_id && st.configured.client_secret && c.cert_found && c.key_found && st.configured.contas.length;
+  const r = ITAU_RESULT;
+  const statusName = { ok: 'OK', parcial: 'Parcial', erro: 'Erro', rodando: 'Rodando' };
+  box.innerHTML = `
+    <h2 style="margin-top:0">Itaú (extrato e saldo da conta)</h2>
+    <p class="small muted">API oficial do Itaú, só leitura. Os lançamentos entram em <strong>Financeiro → Bancos</strong>, junto com os OFX, sem duplicar; a conciliação continua sendo feita lá.</p>
+    <ul class="small" style="padding-left:18px">
+      ${flag(st.configured.client_id, '<span class="mono">ITAU_CLIENT_ID</span>')}${flag(st.configured.client_secret, '<span class="mono">ITAU_CLIENT_SECRET</span>')}
+      ${flag(c.cert_found, 'certificado <span class="mono">itau.crt</span>', certLine)}${flag(c.key_found, 'chave <span class="mono">itau.key</span>', c.key_found ? '' : ' <strong>faltando</strong> (Secret File)')}
+      ${flag(st.configured.contas.length, '<span class="mono">ITAU_CONTAS</span>', st.configured.contas.length ? ` — ${st.configured.contas.map(esc).join(', ')}` : ' <strong>faltando</strong> (ex.: 1234/0012345-6)')}
+    </ul>
+    <div class="row">
+      <div class="field"><label>Período</label><select id="itau-days"><option value="3">últimos 3 dias</option><option value="7" selected>últimos 7 dias</option><option value="30">últimos 30 dias</option><option value="60">últimos 60 dias</option></select></div>
+      <div class="field"><label>&nbsp;</label><button id="btn-itau" ${ready ? '' : 'disabled'}>Buscar extrato agora</button></div>
+      <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${st.has_diagnostic ? '' : 'hidden'}" href="/api/admin/integracoes/itau/diagnostico">Baixar diagnóstico</a></div>
+      <div class="field"><label>&nbsp;</label><label class="small"><input type="checkbox" id="itau-auto" ${st.auto ? 'checked' : ''}> Buscar sozinho a cada 3 horas (6h–22h)</label></div>
+    </div>
+    ${r ? (r.problems && r.problems.length && !(r.results || []).length ? `<div class="alert alert-error small"><strong>Não deu certo:</strong> ${r.problems.map(esc).join('<br>')}</div>`
+      : `<div class="alert alert-ok small">Extrato do Itaú lido.${r.problems && r.problems.length ? ` Avisos: ${r.problems.map(esc).join('; ')}` : ''}</div>
+        <div class="table-wrap"><table><thead><tr><th>Conta</th><th class="num">Lançamentos lidos</th><th class="num">Novos</th><th class="num">Já existiam</th><th class="num">Saldo (banco)</th></tr></thead><tbody>
+        ${(r.results || []).map((x) => `<tr><td>${esc(x.conta)}</td><td class="num">${x.eventos}</td><td class="num">${x.new}</td><td class="num">${x.duplicate}</td><td class="num">${x.saldo_cents === null ? '—' : money(x.saldo_cents)}</td></tr>`).join('')}
+        </tbody></table></div>`) : ''}
+    ${st.runs.length ? `<details style="margin-top:8px"><summary class="small">Últimas buscas</summary><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>
+      ${st.runs.map((x) => `<tr><td class="small nowrap">${fmtDate(x.started_at)}</td><td class="small">${x.kind === 'auto' ? 'Automática' : 'Manual'}</td><td class="small">${statusName[x.status] || esc(x.status)}</td><td class="small">${esc(x.message || '')}</td></tr>`).join('')}
+      </tbody></table></div></details>` : ''}`;
+  $('#itau-auto').addEventListener('change', (e) => guard(async () => {
+    await api('/api/admin/integracoes/itau/automacao', { method: 'PUT', body: { auto: e.target.checked } });
+  }));
+  const btn = $('#btn-itau');
+  btn.addEventListener('click', () => guard(async () => {
+    btn.disabled = true;
+    btn.textContent = 'Consultando o Itaú…';
+    try {
+      ITAU_RESULT = await api('/api/admin/integracoes/itau/buscar', { method: 'POST', body: { days: Number($('#itau-days').value) } });
+    } finally {
+      btn.disabled = false;
+    }
+    renderItauCard();
   }));
 }
 

@@ -51,6 +51,7 @@ const app = createApp(db, { testMode });
 
 // Rotina automática do CPlug (vendas das lojas): de hora em hora e o fechamento de madrugada.
 app.locals.sync.start();
+app.locals.itauSync.start();
 
 const server = app.listen(PORT, () => {
   console.log(`Oggi Pedidos B2B rodando em http://localhost:${PORT}`);

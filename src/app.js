@@ -23,6 +23,7 @@ const { createAnalytics } = require('./analytics');
 const cplug = require('./cplug');
 const rede = require('./rede');
 const redeOptin = require('./rede-optin');
+const itau = require('./itau');
 const { createSync } = require('./sync');
 const T = require('./time');
 const U = require('./util');
@@ -89,6 +90,8 @@ function createApp(db, { testMode = false } = {}) {
   const analytics = createAnalytics(db, reports);
   const sync = createSync(db);
   app.locals.sync = sync; // o server.js liga a agenda (os testes não)
+  const itauSync = require('./itau-sync').createItauSync(db, bank);
+  app.locals.itauSync = itauSync;
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -1061,6 +1064,34 @@ function createApp(db, { testMode = false } = {}) {
     if (!redeLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-rede-${redeLast.date}.json`);
     res.type('application/json').send(JSON.stringify(redeLast, null, 1));
+  });
+
+  // ---------- admin: Itaú (extrato e saldo pela API oficial) ----------
+  let itauLast = null;
+  admin.get('/integracoes/itau', (req, res) => {
+    const c = itau.config();
+    const auto = db.prepare("SELECT value FROM settings WHERE key = 'itau_auto'").get()?.value !== '0';
+    res.json({
+      configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret, contas: c.accounts.map((a) => a.label) },
+      certificate: itau.certInfo(c), auto,
+      runs: db.prepare("SELECT * FROM sync_runs WHERE source = 'itau' ORDER BY id DESC LIMIT 10").all(),
+      has_diagnostic: !!itauLast,
+    });
+  });
+  admin.post('/integracoes/itau/buscar', async (req, res) => {
+    const days = Math.max(1, Math.min(90, Number(req.body?.days) || 7));
+    itauLast = await itauSync.run({ days, kind: 'manual', user: req.admin.name });
+    if (itauLast.busy) throw new BusinessError('Já existe uma busca do Itaú em andamento. Tente de novo em instantes.');
+    res.json({ ...itauLast, log: undefined });
+  });
+  admin.put('/integracoes/itau/automacao', (req, res) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('itau_auto', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(req.body?.auto ? '1' : '0');
+    res.json({ auto: !!req.body?.auto });
+  });
+  admin.get('/integracoes/itau/diagnostico', (req, res) => {
+    if (!itauLast) throw new BusinessError('Faça uma busca antes.');
+    res.attachment('diagnostico-itau.json');
+    res.type('application/json').send(JSON.stringify(itauLast, null, 1));
   });
 
   // ---------- admin: Rede — Opt-in (pedido de acesso aos extratos) ----------

@@ -57,6 +57,63 @@ function createBank(db) {
   const kindOf = (amount) => (amount > 0 ? 'receita' : 'despesa');
 
   // ---------- importação ----------
+  // Grava só o que é novo. Além da chave de cada arquivo, confere data + valor contra o que já existe na conta
+  // vindo de OUTRA fonte (OFX × API do banco têm identificadores diferentes): se o extrato já tem N movimentos
+  // daquele dia e valor, só entra o que passar disso. Assim OFX e busca automática convivem sem duplicar.
+  const countSame = db.prepare('SELECT dedupe_key FROM bank_transactions WHERE bank_account_id = ? AND posted_date = ? AND amount_cents = ?');
+  function insertNew(accountId, importId, transactions) {
+    const keys = dedupeKeys(transactions);
+    const groups = new Map();
+    transactions.forEach((t, i) => {
+      const g = `${t.date}|${t.amount_cents}`;
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(i);
+    });
+    let added = 0;
+    for (const idx of groups.values()) {
+      const t0 = transactions[idx[0]];
+      const batchKeys = new Set(idx.map((i) => keys[i]));
+      const existing = countSame.all(accountId, t0.date, t0.amount_cents).map((r) => r.dedupe_key);
+      const fromOther = existing.filter((k) => !batchKeys.has(k)).length;
+      const already = existing.filter((k) => batchKeys.has(k)).length;
+      let room = Math.max(0, idx.length - fromOther) - already; // quantos deste grupo ainda faltam
+      for (const i of idx) {
+        if (room <= 0) break;
+        if (existing.includes(keys[i])) continue;
+        const t = transactions[i];
+        const ch = q.insertTx.run(accountId, importId, keys[i], t.fitid, t.date, t.amount_cents, t.description, t.trntype).changes;
+        added += ch;
+        room -= ch;
+      }
+    }
+    return added;
+  }
+
+  // Extrato que chega pela API do banco (Itaú): mesma tabela e mesma conciliação do OFX.
+  // account = { bank_code, bank_name, branch, number (sem dígito), digit, label }
+  const importApi = db.transaction(({ account, transactions, periodStart, periodEnd, balanceCents, balanceDate, source, user }) => {
+    const digits = (x) => String(x || '').replace(/\D/g, '').replace(/^0+/, '');
+    const want = digits(`${account.number}${account.digit}`);
+    let acc = db.prepare("SELECT * FROM bank_accounts WHERE bank_code = ? AND kind = 'corrente'").all(account.bank_code)
+      .find((a) => a.account_number && (digits(a.account_number) === want || digits(a.account_number).endsWith(want)));
+    if (!acc) {
+      const manual = q.manualAccount.get(account.bank_code, 'corrente');
+      if (manual) {
+        db.prepare('UPDATE bank_accounts SET account_number = ?, branch = COALESCE(branch, ?) WHERE id = ?').run(`${account.number}${account.digit}`, account.branch, manual.id);
+        acc = manual;
+      }
+    }
+    if (!acc) {
+      const id = Number(q.insertAccount.run(`${account.bank_name} ${account.label}`, account.bank_code, account.bank_name, account.branch, `${account.number}${account.digit}`, 'corrente').lastInsertRowid);
+      acc = { id, name: `${account.bank_name} ${account.label}` };
+    }
+    const importId = Number(q.insertImport.run(acc.id, source, periodStart, periodEnd, balanceCents ?? null, balanceDate ?? null, user).lastInsertRowid);
+    const list = transactions.filter(Boolean);
+    const added = insertNew(acc.id, importId, list);
+    q.updateImport.run(added, list.length - added, importId);
+    return { account: acc.name, account_id: acc.id, period_start: periodStart, period_end: periodEnd, new: added, duplicate: list.length - added };
+  });
+
   const importFiles = db.transaction(({ files, user }) => {
     const results = [];
     for (const f of files) {
@@ -81,11 +138,7 @@ function createBank(db) {
           acc = { id, name };
         }
         const importId = Number(q.insertImport.run(acc.id, f.name, st.period_start, st.period_end, st.ledger_balance_cents, st.balance_date, user).lastInsertRowid);
-        const keys = dedupeKeys(st.transactions);
-        let added = 0;
-        st.transactions.forEach((t, i) => {
-          added += q.insertTx.run(acc.id, importId, keys[i], t.fitid, t.date, t.amount_cents, t.description, t.trntype).changes;
-        });
+        const added = insertNew(acc.id, importId, st.transactions);
         q.updateImport.run(added, st.transactions.length - added, importId);
         results.push({
           file: f.name, account: acc.name, account_id: acc.id, period_start: st.period_start, period_end: st.period_end,
@@ -349,7 +402,7 @@ function createBank(db) {
     return { title: 'Bancos e extratos', subtitle: `${from} a ${to}. Movimentos dos extratos importados.`, warnings, sections };
   }
 
-  return { importFiles, listTransactions, conciliate, conciliateMany, undo, accounts, openingTotal, report, normalize, defaultPattern };
+  return { importFiles, importApi, listTransactions, conciliate, conciliateMany, undo, accounts, openingTotal, report, normalize, defaultPattern };
 }
 
 module.exports = { createBank, normalize, defaultPattern };
