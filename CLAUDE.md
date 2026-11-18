@@ -32,6 +32,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   "Partner not allowed for this company number" = falta o Opt-in. Opt-in em `src/rede-optin.js` (Integrações → Rede):
   POST /partner/v1/organizations/requests/features/merchant-statement (corpo montado lendo o swagger.yaml oficial na hora;
   campo obrigatório desconhecido = não envia), GET .../requests/{requestId}/features/merchant-statement (situação).
+  Corpo real: {requestCompanyNumber, requestType: T|P|I, permissions: "R" (só leitura), companyNumbers só no P}.
   Pedido TOTAL pela matriz 107468247. Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
   developer.userede.com.br é bloqueado NESTE ambiente (o Render acessa).
   Bandeira vem como código (brandCode) — confirmar a tabela com comprovantes reais.

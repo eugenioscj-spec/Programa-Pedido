@@ -81,6 +81,12 @@ function buildBody(spec, schema, ctx, prefix = '', out = { missing: [], notes: [
       if (ctx.tipo === 'PARCIAL') body[name] = ctx.filiais.map((p) => (item.type === 'object' ? null : valueFor(item, p))).filter((x) => x !== null);
       else if (req) body[name] = [];
       if (item.type === 'object') out.missing.push({ campo: full, descricao: 'lista de filiais em formato que o sistema ainda não conhece' });
+    } else if (/^requesttype$/i.test(name) && !Array.isArray(ps.enum)) {
+      // documentação oficial (2024): I = individual, P = parcial (matriz + filiais informadas), T = total (matriz + todas as filiais)
+      body[name] = ctx.tipo === 'PARCIAL' ? 'P' : 'T';
+    } else if (/^permissions?$/i.test(name) && !Array.isArray(ps.enum)) {
+      // R = só leitura (o sistema só lê os extratos; nunca pede escrita nem exclusão)
+      body[name] = ps.type === 'array' ? ['R'] : 'R';
     } else if (Array.isArray(ps.enum) && isTypeField(name)) {
       const want = ctx.tipo === 'PARCIAL' ? /parc|partial/i : /total/i;
       const v = ps.enum.find((x) => want.test(String(x)));

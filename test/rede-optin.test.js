@@ -5,6 +5,39 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { requestAccess, checkAccess, statusLabel } = require('../src/rede-optin');
 
+// Formato real da documentação da Rede (swagger.yaml baixado pelo servidor em 18/11/2026).
+const REAL_SPEC = `
+openapi: 3.0.1
+paths:
+  /partner/v1/organizations/requests/features/merchant-statement:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Cadastro'
+components:
+  schemas:
+    Cadastro:
+      title: Request Body - Solicitação de Acesso ao Extrato - Cadastro
+      type: object
+      required: [requestCompanyNumber, requestType, permissions]
+      properties:
+        requestCompanyNumber:
+          type: number
+          example: 13818724
+        companyNumbers:
+          type: array
+          items:
+            type: number
+        requestType:
+          type: string
+          example: P
+        permissions:
+          type: string
+          example: R
+`;
+
 const SPEC = (extraRequired = '') => `
 openapi: 3.0.1
 paths:
@@ -88,4 +121,15 @@ test('Opt-in: campo obrigatório desconhecido = não envia nada e explica', asyn
   assert.match(r.error, /Nada foi enviado/);
   assert.equal(seen.posts.length, 0);
   assert.equal(r.missing[0].descricao, 'CNPJ do parceiro');
+});
+
+test('Opt-in com o formato real da Rede: T (total) e R (só leitura); parcial manda as filiais em companyNumbers', async (t) => {
+  const { server, seen } = await fakeRede(REAL_SPEC);
+  t.after(() => server.close());
+  const env = envFor(`http://127.0.0.1:${server.address().port}`);
+  const r = await requestAccess({ matriz: '107468247', env });
+  assert.equal(r.error, undefined, r.error);
+  assert.deepEqual(seen.posts[0].body, { requestCompanyNumber: 107468247, requestType: 'T', permissions: 'R' });
+  await requestAccess({ matriz: '107468247', tipo: 'PARCIAL', filiais: ['107531038'], env });
+  assert.deepEqual(seen.posts[1].body, { requestCompanyNumber: 107468247, companyNumbers: [107531038], requestType: 'P', permissions: 'R' });
 });
