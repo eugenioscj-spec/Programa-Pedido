@@ -59,7 +59,8 @@ test('Rede: totais só das aprovadas, canceladas à parte, por modalidade (forma
   assert.deepEqual([t.approved_count, t.total_cents, t.fee_cents, t.net_cents], [2, 26612, 452, 26160]);
   assert.deepEqual([t.cancelled_count, t.cancelled_cents], [1, 18833]);
   assert.equal(t.by_modality.DEBIT.gross_cents, 14800);
-  assert.equal(summarizeSale(sale(10, 1, 'DEBIT')).brand, 'código 1');
+  assert.equal(summarizeSale(sale(10, 1, 'DEBIT')).brand, 'Mastercard');
+  assert.equal(summarizeSale({ ...sale(10, 1, 'DEBIT'), brandCode: 14 }).brand, 'código 14');
 });
 
 test('Rede: com REDE_USUARIO/REDE_SENHA usa o grant "password"; se recusar, tenta client_credentials', async (t) => {

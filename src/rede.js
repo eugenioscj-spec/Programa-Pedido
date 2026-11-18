@@ -88,6 +88,14 @@ const pick = (o, ...names) => {
 };
 const toCents = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Math.round(Number(v) * 100));
 
+// Códigos de bandeira da Rede conferidos com os depósitos no Itaú (vendas da Loja 2 de 16/11/2026 = depósitos de
+// 17/11 "RECEBIMENTO REDE VISA DB" e "MAST DB/AT", centavo a centavo). Os outros aparecem como "código N" até confirmar.
+const BRANDS = { 1: 'Mastercard', 2: 'Visa' };
+function brandName(code) {
+  if (code === null || code === undefined || code === '') return null;
+  return BRANDS[Number(code)] || `código ${code}`;
+}
+
 // Venda resumida com os campos mais prováveis; o registro original vai junto para o diagnóstico.
 function summarizeSale(s) {
   const flat = { ...s };
@@ -105,7 +113,7 @@ function summarizeSale(s) {
     fee_cents: fee,
     other_cents: other,
     // a Rede manda a bandeira como código (brandCode); o nome entra quando a tabela de códigos for confirmada
-    brand: pick(flat, 'brandName', 'brand', 'brand.name') ?? (pick(flat, 'brandCode', 'brand.code') !== null ? `código ${pick(flat, 'brandCode', 'brand.code')}` : null),
+    brand: pick(flat, 'brandName', 'brand', 'brand.name') ?? brandName(pick(flat, 'brandCode', 'brand.code')),
     modality: pick(flat, 'modality', 'modality.type', 'modalityType', 'modality.code', 'productType'),
     installments: pick(flat, 'installmentQuantity', 'installments', 'installmentsNumber'),
     nsu: pick(flat, 'nsu', 'authorizationCode'),

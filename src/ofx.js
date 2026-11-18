@@ -13,6 +13,11 @@ const BANKS = {
 function decodeOfx(buffer) {
   const head = buffer.subarray(0, 600).toString('latin1');
   const declares1252 = /CHARSET:\s*(1252|ISO-8859-1|WINDOWS-1252)/i.test(head) || /ENCODING="?(windows-1252|iso-8859-1)/i.test(head);
+  // Há bancos (ex.: Itaú) que declaram 1252 mas mandam UTF-8 de verdade ("ANDRÃ‰" em vez de "ANDRÉ"):
+  // se o arquivo é UTF-8 válido e tem acentos, vale o UTF-8.
+  let strictUtf8 = null;
+  try { strictUtf8 = new TextDecoder('utf-8', { fatal: true }).decode(buffer); } catch { /* não é UTF-8 */ }
+  if (strictUtf8 !== null && (!declares1252 || /[^\x00-\x7f]/.test(strictUtf8))) return strictUtf8;
   const utf8 = buffer.toString('utf8');
   if (!declares1252 && !utf8.includes('�')) return utf8;
   return new TextDecoder('windows-1252').decode(buffer);
@@ -46,6 +51,10 @@ function parseDate(raw) {
 
 const clean = (s) => String(s || '').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
 
+// Linhas de SALDO que alguns bancos (ex.: Itaú) põem no meio dos lançamentos ("SALDO ANTERIOR",
+// "SALDO TOTAL DISPONÍVEL DIA"): não são movimento de dinheiro e não podem virar receita.
+const isBalanceLine = (desc) => /^SALDO (ANTERIOR|TOTAL|DO DIA|DISPON|FINAL|INICIAL|EM C\/?C|APLIC)/i.test(String(desc || '').trim());
+
 function parseStatement(block, kind) {
   const acct = (kind === 'cartao' ? blocks(block, 'CCACCTFROM')[0] : blocks(block, 'BANKACCTFROM')[0]) || block;
   const bankCode = (tagValue(acct, 'BANKID') || '').replace(/\D/g, '').padStart(3, '0').slice(-3) || null;
@@ -65,7 +74,7 @@ function parseStatement(block, kind) {
       description,
       trntype: tagValue(t, 'TRNTYPE'),
     };
-  }).filter((t) => t.date && Number.isFinite(t.amount_cents) && t.amount_cents !== 0);
+  }).filter((t) => t.date && Number.isFinite(t.amount_cents) && t.amount_cents !== 0 && !isBalanceLine(t.description));
   const ledger = blocks(block, 'LEDGERBAL')[0];
   return {
     kind,
@@ -112,4 +121,4 @@ function dedupeKeys(transactions) {
   });
 }
 
-module.exports = { parseOfx, decodeOfx, dedupeKeys, parseAmount, BANKS };
+module.exports = { parseOfx, decodeOfx, dedupeKeys, parseAmount, isBalanceLine, BANKS };

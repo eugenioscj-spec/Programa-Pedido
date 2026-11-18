@@ -36,7 +36,9 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Corpo real: {requestCompanyNumber, requestType: T|P|I, permissions: "R" (só leitura), companyNumbers só no P}.
   Pedido TOTAL feito em 17/11/2026 20:58 (nº be86c0b3-c9bd-4d39-b429-ab28639f5e85); APROVADO pelo dono no portal em 18/11/2026. Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
   developer.userede.com.br é bloqueado NESTE ambiente (o Render acessa).
-  Bandeira vem como código (brandCode: na Loja 2 em 16/11 apareceram 1, 2 e 14) — confirmar a tabela com comprovantes reais.
+  Bandeira (brandCode): 1 = Mastercard, 2 = Visa (conferido: vendas de 16/11 da Loja 2 = depósitos de 17/11 no Itaú
+  "RECEBIMENTO REDE VISA DB"/"MAST DB"/"MAST AT", centavo a centavo); 14 = provavelmente Elo (falta confirmar).
+  No extrato Itaú: DB = débito (D+1), AT = crédito antecipado (D+1, ~2% a mais), CD = crédito sem antecipação (~30 dias).
   Loja 2 (PV 107531038) funciona; Loja 1 sem vendas (mudando de ponto). Rede só traz até o dia ANTERIOR (D-1).
   Algumas vendas de crédito têm desconto ~2% além do MDR (bruto − líquido − mdrAmount; antecipação?) = other_cents: confirmar.
 - Itaú (18/11/2026): API oficial "Account Statement" (`src/itau.js`, `src/itau-sync.js`; Integrações → Itaú). mTLS com
@@ -44,13 +46,15 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   aprovação → Owner aprova no Bankline em até 7 dias → emitir em até 72 h e baixar .crt/.key; vale 365 dias, renova 30 dias
   antes). Token STS client_credentials (~5 min). Extrato grava em bank_transactions (mesma conciliação do OFX); `insertNew`
   no bank.js evita duplicar OFX × API por dia+valor. Rotina: a cada 3 h, 6h–22h, últimos 7 dias (setting itau_auto).
-  Aguardando o dono emitir a credencial/certificado e cadastrar no Render.
+  Conta Itaú da FILIAL (Loja 2): ag. 4776, c/c 99822-3. O dono gerou as chaves no programa do ZIP (caminho do analista) e vai
+  mandar a chave pública ao gerente pedindo Extrato + Pix cobrança + Boletos + DDA (sem pagamentos). OFX do Itaú: o parser
+  ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
 
 ## Pendências (lembrar o dono; apagar daqui quando resolver)
 1. Receita das lojas na DRE: o dono quer separar venda loja × B2B e conferir com o CPlug antes de ligar o lançamento automático.
-2. Pix das lojas: confirmar se cai no mesmo dia e em qual banco.
+2. Pix das lojas: o OFX do Itaú da filial mostra "PIX QR CODE RECEBIDO" no mesmo dia (Loja 2 → Itaú 4776/99822-3); confirmar com o dono e a Loja 1.
 3. Taxas de cartão: lançar só quando a Rede liberar a produção (chamado RITM8284863; aí: REDE_AMBIENTE=producao, REDE_PVS, credenciais novas).
 4. CMV das lojas pelo produto vendido (hoje: mercadoria enviada às lojas a custo) — pendência futura.
 5. Estoque de cada loja: o dono vai fazer inventário das lojas; depois criar estoque por loja (transferência entra, venda do CPlug sai).
