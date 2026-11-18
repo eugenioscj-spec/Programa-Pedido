@@ -33,7 +33,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   POST /partner/v1/organizations/requests/features/merchant-statement (corpo montado lendo o swagger.yaml oficial na hora;
   campo obrigatório desconhecido = não envia), GET .../requests/{requestId}/features/merchant-statement (situação).
   Corpo real: {requestCompanyNumber, requestType: T|P|I, permissions: "R" (só leitura), companyNumbers só no P}.
-  Pedido TOTAL feito em 17/11/2026 20:58 (nº be86c0b3-c9bd-4d39-b429-ab28639f5e85, PENDENTE). Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
+  Pedido TOTAL feito em 17/11/2026 20:58 (nº be86c0b3-c9bd-4d39-b429-ab28639f5e85); APROVADO pelo dono no portal em 18/11/2026. Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
   developer.userede.com.br é bloqueado NESTE ambiente (o Render acessa).
   Bandeira vem como código (brandCode) — confirmar a tabela com comprovantes reais.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
