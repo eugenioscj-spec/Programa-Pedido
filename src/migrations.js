@@ -828,6 +828,51 @@ const MIGRATIONS = [
       db.prepare("INSERT INTO settings (key, value) VALUES ('pending_transfer_loja2', '2026-11-14') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
     },
   },
+  {
+    version: 16,
+    name: 'Rede: vendas guardadas por dia e PV; lojas da Rede e contas do Itaú ligadas às nossas lojas (conferência)',
+    up(db) {
+      db.exec(`
+        -- Vendas da Rede (uma linha por venda). Cada busca substitui o dia inteiro daquele PV.
+        CREATE TABLE IF NOT EXISTS rede_sales (
+          id            INTEGER PRIMARY KEY,
+          pv            TEXT NOT NULL,
+          date          TEXT NOT NULL,               -- dia da venda (YYYY-MM-DD)
+          hour          TEXT,
+          nsu           TEXT,
+          brand         TEXT,
+          modality      TEXT,                        -- CREDIT | DEBIT | ...
+          installments  INTEGER,
+          gross_cents   INTEGER NOT NULL DEFAULT 0,
+          fee_cents     INTEGER NOT NULL DEFAULT 0,  -- taxa (MDR)
+          other_cents   INTEGER NOT NULL DEFAULT 0,  -- outros descontos (ex.: antecipação)
+          net_cents     INTEGER NOT NULL DEFAULT 0,
+          status        TEXT,
+          cancelled     INTEGER NOT NULL DEFAULT 0,
+          fetched_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_rede_sales ON rede_sales(pv, date);
+        -- Dias já buscados (mesmo sem venda), para a agenda não repetir à toa.
+        CREATE TABLE IF NOT EXISTS rede_days (
+          pv          TEXT NOT NULL,
+          date        TEXT NOT NULL,
+          sales       INTEGER NOT NULL DEFAULT 0,
+          fee_cents   INTEGER NOT NULL DEFAULT 0,
+          fetched_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (pv, date)
+        );
+      `);
+      // PVs da Rede → nossas lojas (decisão do dono: matriz = Loja 1 - Centro; filial = Loja 2)
+      const loc = (name) => db.prepare('SELECT id FROM locations WHERE name = ?').get(name)?.id ?? null;
+      const ins = db.prepare(`INSERT INTO int_stores (source, external_id, name, cnpj, location_id) VALUES ('rede', ?, ?, ?, ?)
+        ON CONFLICT(source, external_id) DO NOTHING`);
+      ins.run('107468247', 'Rede PV 107468247 (matriz)', '63.532.954/0001-65', loc('Loja 1 - Centro'));
+      ins.run('107531038', 'Rede PV 107531038 (filial)', '63.532.954/0002-46', loc('Loja 2'));
+      // Conta do Itaú de cada loja (conta + dígito), para conferir depósitos da Rede e Pix
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('conc_itau_contas', ?)").run(JSON.stringify({ 'Loja 1 - Centro': '975357', 'Loja 2': '998223' }));
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('rede_auto', '1')").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

@@ -89,6 +89,7 @@ function setView(view) {
     analises: renderAnalytics,
     integracoes: renderIntegrations,
     'vendas-lojas': renderStoreSales,
+    conferencia: renderConciliation,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
@@ -1989,6 +1990,72 @@ async function openDePara() {
 
 // ======================= VENDAS DAS LOJAS =======================
 const VL = { date: null };
+// Conferência diária por loja: CPlug × Rede × Itaú (valor exato).
+const CF = { from: null, to: null };
+async function renderConciliation() {
+  if (!CF.to) { CF.to = addDaysLocal(todayLocal(), -1); CF.from = `${CF.to.slice(0, 7)}-01`; }
+  const [d, rt] = await Promise.all([api(`/api/admin/conferencia?from=${CF.from}&to=${CF.to}`), api('/api/admin/integracoes/rede/rotina')]);
+  const cell = (c, aName, bName) => {
+    if (!c) return '<td class="num muted">—</td>';
+    if (c.ok) return `<td class="num" title="${aName} = ${bName}">✅ ${money(c.a)}</td>`;
+    return `<td class="num" style="background:#fdecea" title="${aName} ${money(c.a)} × ${bName} ${money(c.b)}"><strong class="qty-neg">❌ ${money(c.diff)}</strong>
+      <div class="small muted">${aName} ${money(c.a)}<br>${bName} ${money(c.b)}</div></td>`;
+  };
+  const depCell = (x) => {
+    if (!x.deposit) return '<td class="small muted">—</td>';
+    const when = fmtDate(x.deposit.date, false);
+    if (x.deposit.ok === null) return `<td class="small muted">${when}<br>sem extrato / parcial</td>`;
+    return x.deposit.ok ? `<td class="small">✅ ${when}</td>` : `<td class="small" style="background:#fdecea"><strong class="qty-neg">❌ ${when}</strong></td>`;
+  };
+  const lastRun = rt.runs[0];
+  app.innerHTML = `
+    <div class="section-head"><h1>Conferência das lojas</h1><span class="spacer"></span>
+      <input type="date" id="cf-from" value="${CF.from}" style="max-width:170px"> <input type="date" id="cf-to" value="${CF.to}" style="max-width:170px"></div>
+    <p class="small muted">Valor exato, dia a dia: <strong>cartão</strong> = CPlug × Rede (bruto); <strong>Pix</strong> = CPlug × "PIX QR CODE RECEBIDO" no Itaú da loja;
+      <strong>depósito</strong> = líquido do débito e do crédito antecipado da Rede × "RECEBIMENTO REDE" no Itaú no dia útil seguinte. ✅ bateu · ❌ diferença (CPlug − outro) · — sem dados de um dos lados.</p>
+    <div class="card small">
+      <strong>Vendas da Rede:</strong> ${rt.configured ? `rotina ${rt.auto ? 'ligada' : 'desligada'} (busca os 3 últimos dias a partir das 6h, de 8 em 8 horas).` : 'configure a Rede em produção (REDE_PVS) para a rotina rodar.'}
+      ${lastRun ? ` Última busca: ${fmtDate(lastRun.started_at)} (${esc(lastRun.status)})${lastRun.message ? ` — ${esc(lastRun.message)}` : ''}.` : ''}
+      <div class="row" style="margin-top:6px">
+        <button class="btn-secondary btn-sm" id="cf-rede" ${rt.configured ? '' : 'disabled'}>Buscar vendas da Rede deste período</button>
+        <label class="small"><input type="checkbox" id="cf-rede-auto" ${rt.auto ? 'checked' : ''}> busca automática</label>
+        <span class="small muted">O extrato do Itaú vem de Financeiro → Bancos (OFX) ou da integração do Itaú.</span>
+      </div>
+    </div>
+    ${d.stores.map((s) => `
+      <div class="card">
+        <h2 style="margin-top:0">${esc(s.name)} <span class="small muted">${s.summary.checks ? `${s.summary.ok} de ${s.summary.checks} conferências batem${s.summary.diff ? ` · <strong class="qty-neg">${s.summary.diff} com diferença</strong>` : ''}` : 'sem dados para conferir'}</span></h2>
+        <p class="small muted" style="margin-top:0">CPlug: ${s.has_cplug ? 'ligado' : '<strong>não ligado</strong> (Integrações → lojas)'} · Rede: ${s.pvs.length ? `PV ${s.pvs.map(esc).join(', ')}` : '<strong>sem PV</strong>'} ·
+          Itaú: ${s.bank_account ? esc(s.bank_account) : `<strong>sem extrato</strong>${s.bank_account_hint ? ` (conta …${esc(s.bank_account_hint)}: importe o OFX em Financeiro → Bancos)` : ''}`}</p>
+        <div class="table-wrap"><table><thead><tr><th>Dia</th><th class="num">Crédito</th><th class="num">Débito</th><th class="num">Pix</th><th>Depósito Rede</th><th class="num">Descontos Rede</th><th class="num">Dinheiro (CPlug)</th></tr></thead><tbody>
+          ${s.days.filter((x) => x.cplug || x.rede || x.itau).map((x) => `<tr>
+            <td class="nowrap">${fmtDate(x.date, false)}</td>
+            ${cell(x.check.credito, 'CPlug', 'Rede')}${cell(x.check.debito, 'CPlug', 'Rede')}${cell(x.check.pix, 'CPlug', 'Itaú')}
+            ${depCell(x)}
+            <td class="num small">${x.rede ? `${money(x.rede.fee + x.rede.other)}${x.rede.cancelled_count ? `<div class="muted">${x.rede.cancelled_count} cancelada(s)</div>` : ''}` : '—'}</td>
+            <td class="num small">${x.cplug ? money(x.cplug.dinheiro) : '—'}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Sem dados no período.</td></tr>'}
+        </tbody></table></div>
+        ${s.deposits.length ? `<details style="margin-top:8px"><summary class="small">Depósitos da Rede no Itaú (${s.deposits.length})</summary><div class="table-wrap"><table>
+          <thead><tr><th>Dia do depósito</th><th>Vendas de</th><th class="num">Previsto</th><th class="num">Recebido</th><th class="num">Diferença</th><th>Linhas do extrato</th></tr></thead><tbody>
+          ${s.deposits.map((x) => `<tr ${x.ok === false ? 'style="background:#fdecea"' : ''}><td class="nowrap">${fmtDate(x.date, false)}</td><td class="small">${x.sale_days.map((y) => fmtDate(y, false)).join(', ')}${x.partial ? '<div class="muted">inclui dias antes do período</div>' : ''}</td>
+            <td class="num">${money(x.expected)}</td><td class="num">${x.received === null ? '<span class="muted">sem extrato</span>' : money(x.received)}</td>
+            <td class="num">${x.received === null ? '—' : `${x.ok ? '✅' : x.ok === false ? '❌' : ''} ${money(x.received - x.expected)}`}</td>
+            <td class="small">${x.lines.map((l) => `${esc(l.brand)} ${esc(l.type)} ${money(l.amount_cents)}`).join(' · ')}${x.credit_cd ? `<div class="muted">CD (crédito de ~30 dias atrás): ${money(x.credit_cd)}</div>` : ''}</td></tr>`).join('')}
+          </tbody></table></div></details>` : ''}
+      </div>`).join('')}`;
+  const reload = () => guard(renderConciliation);
+  $('#cf-from').addEventListener('change', (e) => { CF.from = e.target.value; reload(); });
+  $('#cf-to').addEventListener('change', (e) => { CF.to = e.target.value; reload(); });
+  $('#cf-rede-auto').addEventListener('change', (e) => guard(async () => { await api('/api/admin/integracoes/rede/rotina/automacao', { method: 'PUT', body: { auto: e.target.checked } }); }));
+  const btn = $('#cf-rede');
+  btn.addEventListener('click', () => guard(async () => {
+    btn.disabled = true;
+    btn.textContent = 'Buscando na Rede… (pode levar alguns minutos)';
+    try { await api('/api/admin/integracoes/rede/rotina/buscar', { method: 'POST', body: { from: CF.from, to: CF.to } }); } finally { btn.disabled = false; }
+    reload();
+  }));
+}
+
 async function renderStoreSales() {
   if (!VL.date) VL.date = todayLocal();
   const d = await api(`/api/admin/lojas/vendas?date=${VL.date}`);

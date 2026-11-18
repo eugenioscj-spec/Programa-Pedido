@@ -8,7 +8,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Render (plano pago, com disco `/data`, `DB_PATH=/data/oggi.db`). Publica sozinho a cada push na branch
   **`claude/oggi-sorvetes-b2b-ordering-lbo3ri`** (é nela que se trabalha; não há PR).
 - Node 22, Express 5, better-sqlite3, front-end em JS puro (`public/`). Testes: `npm test` (node:test) — rodar antes de enviar.
-- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 15.
+- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 16.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
   `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `ITAU_CLIENT_ID/SECRET`, `ITAU_CONTAS`
@@ -49,6 +49,13 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Contas Itaú: MATRIZ (Loja 1) ag. 1364 c/c 97535-7; FILIAL (Loja 2) ag. 4776 c/c 99822-3 → ITAU_CONTAS="1364/0097535-7,4776/0099822-3". O dono gerou as chaves no programa do ZIP (caminho do analista) e vai
   mandar a chave pública ao gerente pedindo Extrato + Pix cobrança + Boletos + DDA (sem pagamentos). OFX do Itaú: o parser
   ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
+- Conferência (18/11/2026, menu "Conferência"; `src/conciliacao.js` + `src/rede-sync.js`, migração 16): VALOR EXATO
+  (decisão do dono: diferença zero; se as inconsistências forem muitas, rever). Por loja e dia: crédito/débito CPlug × Rede
+  (bruto aprovado); Pix CPlug × "PIX QR CODE RECEBIDO" no Itaú da loja; depósito: líquido do débito + crédito antecipado
+  (other_cents > 0) × "RECEBIMENTO REDE <BANDEIRA> DB|AT<PV>" no dia útil seguinte (CD = crédito de ~30 dias, à parte).
+  Rotina Rede: guarda rede_sales/rede_days, refaz os 3 últimos dias, a partir das 6h de 8 em 8 h (setting rede_auto).
+  Lojas ligadas: int_stores source 'rede' (107468247 → Loja 1, 107531038 → Loja 2); contas Itaú em settings conc_itau_contas.
+  Validado com dados reais de 16/11 (Loja 2): tudo bate, depósito 17/11 = R$ 272,01. Só compara, não lança nada.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
 

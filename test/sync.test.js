@@ -30,7 +30,7 @@ test('rotina: guarda o retrato do dia por loja, refaz sem duplicar e monta o de-
   const r1 = await sync.run(['2026-11-13'], 'manual');
   assert.equal(r1.status, 'parcial', 'Buritis sem formas de pagamento');
   assert.match(r1.message, /BURITIS 2026-11-13/);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM int_stores').get().n, 2);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM int_stores WHERE source = 'cplug'").get().n, 2);
   // segunda busca do mesmo dia (vendas aumentaram): substitui, não soma
   await sync.run(['2026-11-13'], 'hoje');
   const t = db.prepare("SELECT t.* FROM cplug_daily_totals t JOIN int_stores s ON s.id = t.store_id WHERE s.external_id = '1'").get();

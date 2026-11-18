@@ -92,6 +92,9 @@ function createApp(db, { testMode = false } = {}) {
   app.locals.sync = sync; // o server.js liga a agenda (os testes não)
   const itauSync = require('./itau-sync').createItauSync(db, bank);
   app.locals.itauSync = itauSync;
+  const redeSync = require('./rede-sync').createRedeSync(db);
+  app.locals.redeSync = redeSync;
+  const conciliacao = require('./conciliacao').createConciliacao(db);
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -1064,6 +1067,40 @@ function createApp(db, { testMode = false } = {}) {
     if (!redeLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-rede-${redeLast.date}.json`);
     res.type('application/json').send(JSON.stringify(redeLast, null, 1));
+  });
+
+  // ---------- admin: Rede — rotina diária (guarda as vendas) ----------
+  admin.get('/integracoes/rede/rotina', (req, res) => {
+    res.json({
+      configured: redeSync.configured(), running: !!redeSync.isRunning(),
+      auto: db.prepare("SELECT value FROM settings WHERE key = 'rede_auto'").get()?.value !== '0',
+      runs: db.prepare("SELECT * FROM sync_runs WHERE source = 'rede' ORDER BY id DESC LIMIT 10").all(),
+      days: db.prepare('SELECT pv, date, sales, fee_cents, fetched_at FROM rede_days ORDER BY date DESC, pv LIMIT 20').all(),
+    });
+  });
+  admin.post('/integracoes/rede/rotina/buscar', async (req, res) => {
+    const from = String(req.body?.from || ''); const to = String(req.body?.to || '');
+    let dates;
+    if (T.isDate(from) && T.isDate(to) && from <= to) {
+      dates = [];
+      for (let d = from; d <= to && dates.length < 62; d = T.addDays(d, 1)) dates.push(d);
+    } else dates = redeSync.lastDays(new Date(), 3);
+    const r = await redeSync.run(dates, 'manual');
+    if (r.busy) throw new BusinessError('Já existe uma busca da Rede em andamento.');
+    res.json(r);
+  });
+  admin.put('/integracoes/rede/rotina/automacao', (req, res) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('rede_auto', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(req.body?.auto ? '1' : '0');
+    res.json({ auto: !!req.body?.auto });
+  });
+
+  // ---------- admin: conferência diária CPlug × Rede × Itaú ----------
+  admin.get('/conferencia', (req, res) => {
+    const to = T.isDate(String(req.query.to || '')) ? String(req.query.to) : T.addDays(T.localDate(), -1);
+    const from = T.isDate(String(req.query.from || '')) ? String(req.query.from) : `${to.slice(0, 7)}-01`;
+    if (from > to) throw new BusinessError('A data inicial é depois da final.');
+    if (T.addDays(from, 92) < to) throw new BusinessError('Escolha um período de até 3 meses.');
+    res.json({ from, to, stores: conciliacao.report({ from, to, locationId: req.query.location_id || null }) });
   });
 
   // ---------- admin: Itaú (extrato e saldo pela API oficial) ----------
