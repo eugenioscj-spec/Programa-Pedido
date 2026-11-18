@@ -92,12 +92,18 @@ const toCents = (v) => (v === null || v === undefined || v === '' || Number.isNa
 function summarizeSale(s) {
   const flat = { ...s };
   for (const [k, v] of Object.entries(s)) if (v && typeof v === 'object' && !Array.isArray(v)) for (const [k2, v2] of Object.entries(v)) flat[`${k}.${k2}`] = v2;
+  const gross = toCents(pick(flat, 'amount', 'grossAmount', 'saleAmount', 'totalAmount'));
+  const net = toCents(pick(flat, 'netAmount', 'liquidAmount'));
+  const fee = toCents(pick(flat, 'mdrAmount', 'discountAmount', 'feeAmount', 'mdrFee'));
+  // o que a Rede desconta além da taxa (MDR): bruto − líquido − taxa (ex.: antecipação). Nunca negativo.
+  const other = gross !== null && net !== null ? Math.max(0, gross - net - (fee || 0)) : null;
   return {
     date: pick(flat, 'saleDate', 'movementDate', 'date', 'transactionDate'),
     hour: pick(flat, 'saleHour', 'hour'),
-    gross_cents: toCents(pick(flat, 'amount', 'grossAmount', 'saleAmount', 'totalAmount')),
-    net_cents: toCents(pick(flat, 'netAmount', 'liquidAmount')),
-    fee_cents: toCents(pick(flat, 'mdrAmount', 'discountAmount', 'feeAmount', 'mdrFee')),
+    gross_cents: gross,
+    net_cents: net,
+    fee_cents: fee,
+    other_cents: other,
     // a Rede manda a bandeira como código (brandCode); o nome entra quando a tabela de códigos for confirmada
     brand: pick(flat, 'brandName', 'brand', 'brand.name') ?? (pick(flat, 'brandCode', 'brand.code') !== null ? `código ${pick(flat, 'brandCode', 'brand.code')}` : null),
     modality: pick(flat, 'modality', 'modality.type', 'modalityType', 'modality.code', 'productType'),
@@ -115,15 +121,16 @@ function totals(summary) {
   const byModality = {};
   for (const x of ok) {
     const k = x.modality || 'não informado';
-    byModality[k] = byModality[k] || { count: 0, gross_cents: 0, fee_cents: 0, net_cents: 0 };
+    byModality[k] = byModality[k] || { count: 0, gross_cents: 0, fee_cents: 0, other_cents: 0, net_cents: 0 };
     byModality[k].count += 1;
     byModality[k].gross_cents += x.gross_cents || 0;
     byModality[k].fee_cents += x.fee_cents || 0;
+    byModality[k].other_cents += x.other_cents || 0;
     byModality[k].net_cents += x.net_cents || 0;
   }
   const cancelled = summary.filter(isCancelled);
   return {
-    approved_count: ok.length, total_cents: sum(ok, 'gross_cents'), fee_cents: sum(ok, 'fee_cents'), net_cents: sum(ok, 'net_cents'),
+    approved_count: ok.length, total_cents: sum(ok, 'gross_cents'), fee_cents: sum(ok, 'fee_cents'), other_cents: sum(ok, 'other_cents'), net_cents: sum(ok, 'net_cents'),
     cancelled_count: cancelled.length, cancelled_cents: sum(cancelled, 'gross_cents'), by_modality: byModality,
   };
 }

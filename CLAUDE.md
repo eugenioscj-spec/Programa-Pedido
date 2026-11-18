@@ -35,7 +35,9 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Corpo real: {requestCompanyNumber, requestType: T|P|I, permissions: "R" (só leitura), companyNumbers só no P}.
   Pedido TOTAL feito em 17/11/2026 20:58 (nº be86c0b3-c9bd-4d39-b429-ab28639f5e85); APROVADO pelo dono no portal em 18/11/2026. Depois o dono aprova no portal (Minha Rede → PV → Conciliação → "Compartilhar").
   developer.userede.com.br é bloqueado NESTE ambiente (o Render acessa).
-  Bandeira vem como código (brandCode) — confirmar a tabela com comprovantes reais.
+  Bandeira vem como código (brandCode: na Loja 2 em 16/11 apareceram 1, 2 e 14) — confirmar a tabela com comprovantes reais.
+  Loja 2 (PV 107531038) funciona; Loja 1 sem vendas (mudando de ponto). Rede só traz até o dia ANTERIOR (D-1).
+  Algumas vendas de crédito têm desconto ~2% além do MDR (bruto − líquido − mdrAmount; antecipação?) = other_cents: confirmar.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
 

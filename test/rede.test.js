@@ -36,7 +36,7 @@ test('Rede: token com Client ID/Secret, vendas do dia com paginação e campos r
   const r = await fetchSales({ date: '2026-11-13', pv: '13381369', env });
   assert.equal(r.error, undefined);
   assert.equal(r.sales.length, 2, 'juntou as duas páginas');
-  assert.deepEqual(r.summary[0], { date: '2026-11-13', hour: null, gross_cents: 4792, net_cents: 4636, fee_cents: 156, brand: 'MASTERCARD', modality: 'CREDIT', installments: 1, nsu: '1', status: 'APPROVED' });
+  assert.deepEqual(r.summary[0], { date: '2026-11-13', hour: null, gross_cents: 4792, net_cents: 4636, fee_cents: 156, other_cents: 0, brand: 'MASTERCARD', modality: 'CREDIT', installments: 1, nsu: '1', status: 'APPROVED' });
   assert.equal(r.total_cents, 5792);
   assert.ok(!JSON.stringify(r.log).includes('tok-123'), 'o token não vai para o diagnóstico');
 
@@ -91,4 +91,11 @@ test('Rede: com REDE_USUARIO/REDE_SENHA usa o grant "password"; se recusar, tent
   const bad = await fetchSales({ date: '2026-11-18', pv: '1', env: { ...env, REDE_SENHA: 'errada' } });
   assert.deepEqual(seen, ['password', 'client_credentials']);
   assert.match(bad.error, /recusou as credenciais/);
+});
+
+test('Rede: desconto além da taxa (ex.: antecipação) aparece separado — venda real de 16/11/2026', () => {
+  const s = summarizeSale({ status: 'APPROVED', amount: 49, mdrAmount: 0.6, netAmount: 47.42, modality: { type: 'CREDIT' }, brandCode: 1 });
+  assert.deepEqual([s.fee_cents, s.other_cents], [60, 98]);
+  const t = totals([s, summarizeSale({ status: 'APPROVED', amount: 20.99, mdrAmount: 0.19, netAmount: 20.8, modality: { type: 'DEBIT' } })]);
+  assert.deepEqual([t.fee_cents, t.other_cents, t.total_cents - t.net_cents], [79, 98, 177]);
 });

@@ -1824,15 +1824,16 @@ function redeResult(r) {
       ${r.cancelled_count ? ` · ${r.cancelled_count} cancelada(s) (${money(r.cancelled_cents)}, fora do total)` : ''}.</div>
     <div class="grid grid-4" style="margin-bottom:10px">
       <div class="card stat"><div class="label">Vendido (bruto)</div><div class="value">${money(r.total_cents)}</div></div>
-      <div class="card stat"><div class="label">Taxas da Rede</div><div class="value qty-neg">${money(r.fee_cents)}</div><div class="small muted">${r.total_cents ? pct(r.fee_cents / r.total_cents) : '—'} do bruto</div></div>
+      <div class="card stat"><div class="label">Descontos da Rede</div><div class="value qty-neg">${money((r.fee_cents || 0) + (r.other_cents || 0))}</div>
+        <div class="small muted">${r.total_cents ? pct(((r.fee_cents || 0) + (r.other_cents || 0)) / r.total_cents) : '—'} do bruto · taxa ${money(r.fee_cents)}${r.other_cents ? ` + outros descontos ${money(r.other_cents)} (antecipação?)` : ''}</div></div>
       <div class="card stat"><div class="label">A receber (líquido)</div><div class="value qty-pos">${money(r.net_cents)}</div></div>
     </div>
-    ${mods.length ? `<div class="table-wrap" style="margin-bottom:10px"><table><thead><tr><th>Modalidade</th><th class="num">Vendas</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th></tr></thead><tbody>
-      ${mods.map(([m, v]) => `<tr><td>${esc(modName(m))}</td><td class="num">${v.count}</td><td class="num">${money(v.gross_cents)}</td><td class="num">${money(v.fee_cents)}</td><td class="num">${money(v.net_cents)}</td></tr>`).join('')}
+    ${mods.length ? `<div class="table-wrap" style="margin-bottom:10px"><table><thead><tr><th>Modalidade</th><th class="num">Vendas</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Outros desc.</th><th class="num">Líquido</th></tr></thead><tbody>
+      ${mods.map(([m, v]) => `<tr><td>${esc(modName(m))}</td><td class="num">${v.count}</td><td class="num">${money(v.gross_cents)}</td><td class="num">${money(v.fee_cents)}</td><td class="num">${money(v.other_cents || 0)}</td><td class="num">${money(v.net_cents)}</td></tr>`).join('')}
       </tbody></table></div>` : ''}
-    ${list.length ? `<details><summary>Ver as ${list.length} vendas</summary><div class="table-wrap"><table><thead><tr><th>Hora</th><th>Bandeira</th><th>Modalidade</th><th class="num">Parc.</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Líquido</th><th>Status</th></tr></thead><tbody>
+    ${list.length ? `<details><summary>Ver as ${list.length} vendas</summary><div class="table-wrap"><table><thead><tr><th>Hora</th><th>Bandeira</th><th>Modalidade</th><th class="num">Parc.</th><th class="num">Bruto</th><th class="num">Taxa</th><th class="num">Outros desc.</th><th class="num">Líquido</th><th>Status</th></tr></thead><tbody>
       ${list.slice(0, 200).map((s) => `<tr ${/cancel/i.test(s.status || '') ? 'style="opacity:.5"' : ''}><td class="nowrap small">${esc(s.hour || s.date || '')}</td><td class="small">${esc(s.brand ?? '—')}</td><td>${esc(modName(s.modality ?? '—'))}</td><td class="num">${esc(s.installments ?? '—')}</td>
-        <td class="num">${s.gross_cents === null ? '—' : money(s.gross_cents)}</td><td class="num">${s.fee_cents === null ? '—' : money(s.fee_cents)}</td>
+        <td class="num">${s.gross_cents === null ? '—' : money(s.gross_cents)}</td><td class="num">${s.fee_cents === null ? '—' : money(s.fee_cents)}</td><td class="num">${s.other_cents ? money(s.other_cents) : '—'}</td>
         <td class="num">${s.net_cents === null ? '—' : money(s.net_cents)}</td><td class="small">${esc(s.status ?? '')}</td></tr>`).join('')}
       </tbody></table></div></details>` : ''}`;
 }
