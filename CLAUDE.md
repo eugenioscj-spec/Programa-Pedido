@@ -62,13 +62,17 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 ## Pendências (lembrar o dono; apagar daqui quando resolver)
 1. Receita das lojas na DRE: o dono quer separar venda loja × B2B e conferir com o CPlug antes de ligar o lançamento automático.
 2. Pix das lojas: o OFX do Itaú da filial mostra "PIX QR CODE RECEBIDO" no mesmo dia (Loja 2 → Itaú 4776/99822-3); confirmar com o dono e a Loja 1.
-3. Taxas de cartão: lançar só quando a Rede liberar a produção (chamado RITM8284863; aí: REDE_AMBIENTE=producao, REDE_PVS, credenciais novas).
+3. Taxas de cartão: a Rede de produção JÁ funciona (18/11). Falta o dono decidir como lançar: MDR (taxa) e antecipação (~2%) como despesas separadas?
 4. CMV das lojas pelo produto vendido (hoje: mercadoria enviada às lojas a custo) — pendência futura.
 5. Estoque de cada loja: o dono vai fazer inventário das lojas; depois criar estoque por loja (transferência entra, venda do CPlug sai).
 6. Custo do estoque da câmara (inventário de 13/11 entrou sem custo).
 7. Decisões contábeis antigas ainda não confirmadas: transferência às lojas como CMV das lojas; perdas no CMV; brindes como despesa.
 8. Bancos: cadastrar Itaú/Santander/Cofre com saldo inicial; depois conexão automática (Open Finance).
 9. O dono disse ter "outras alterações" a pedir (ex.: preços) — perguntar.
+11. Itaú: dono envia o e-mail ao gerente (chave pública) e depois faz a etapa 2 do programa + Render (Secret Files e variáveis).
+12. Estratégia (19/11/2026): meta de 20 lojas e venda por R$ 10 mi+ → proposta de menus por área, painel executivo, DRE por loja
+    (EBITDA de loja), orçamento × realizado, fechamento mensal com trava, auditoria, cadastro de lojas (CAPEX, m², aluguel),
+    pacote de valuation (LTM, SSS, cohort). Aguardando o dono escolher por onde começar.
 10. Escala para ~20 lojas: avaliar API paga do CPlug (custo por acesso ou por loja — ele perguntou ao suporte), perfis de acesso
     para os sócios (contador = financeiro; sócio de Sinop = operacional; investidores = leitura), DRE semanal por loja com metas e
     alertas, relatório automático de segunda-feira, cópia de segurança fora do Render, feriados no "dia útil".
