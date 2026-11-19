@@ -10,6 +10,7 @@
 
 const T = require('./time');
 const { nextBusinessDay } = require('./receivables');
+const { parseAccount } = require('./itau');
 
 const fold = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 function bucket(method) {
@@ -26,16 +27,18 @@ const PIX_LINE = /PIX QR CODE RECEBIDO/i;
 
 function createConciliacao(db) {
   function stores() {
-    const locs = db.prepare("SELECT id, name FROM locations WHERE kind = 'loja' AND active = 1 ORDER BY name").all();
+    const locs = db.prepare("SELECT * FROM locations WHERE kind = 'loja' AND active = 1 ORDER BY name").all();
     let contas = {};
     try { contas = JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'conc_itau_contas'").get()?.value || '{}'); } catch { contas = {}; }
     const banks = db.prepare("SELECT id, name, account_number FROM bank_accounts WHERE bank_code = '341' AND kind = 'corrente'").all();
     return locs.map((l) => {
       const cplug = db.prepare("SELECT id FROM int_stores WHERE source = 'cplug' AND location_id = ?").get(l.id);
       const pvs = db.prepare("SELECT external_id FROM int_stores WHERE source = 'rede' AND location_id = ?").all(l.id).map((r) => r.external_id);
-      const want = digits(contas[l.name]);
+      // conta do Itaú: a da ficha da loja (Lojas → cadastro); se não tiver, a configuração antiga
+      const acc = l.itau_account ? parseAccount(l.itau_account) : null;
+      const want = acc ? digits(`${acc.number}${acc.digit}`) : digits(contas[l.name]);
       const bankAcc = want ? banks.find((b) => digits(b.account_number).endsWith(want)) : null;
-      return { location_id: l.id, name: l.name, cplug_store_id: cplug ? cplug.id : null, pvs, bank_account: bankAcc || null, bank_account_hint: contas[l.name] || null };
+      return { location_id: l.id, name: l.name, cplug_store_id: cplug ? cplug.id : null, pvs, bank_account: bankAcc || null, bank_account_hint: acc ? acc.label : (contas[l.name] || null) };
     });
   }
 

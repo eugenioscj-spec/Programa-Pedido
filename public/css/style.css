@@ -66,6 +66,25 @@ h3 { font-size: 1rem; }
 }
 .topbar nav button:hover, .topbar nav a:hover { opacity: 1; background: rgba(255, 255, 255, .14); }
 .topbar nav .active { opacity: 1; background: rgba(255, 255, 255, .22); font-weight: 600; }
+/* submenu da área escolhida (segunda linha do topo) */
+.subnav { background: rgba(0, 0, 0, .14); }
+.subnav-inner { max-width: 1200px; margin: 0 auto; padding: 4px 16px; display: flex; gap: 4px; flex-wrap: wrap; }
+.subnav button {
+  background: transparent; border: 0; color: #fff; opacity: .85; font: inherit; font-size: .92rem;
+  padding: 5px 10px; border-radius: 8px; cursor: pointer;
+}
+.subnav button:hover { opacity: 1; background: rgba(255, 255, 255, .14); }
+.subnav button.active { opacity: 1; background: rgba(255, 255, 255, .26); font-weight: 600; }
+/* painel executivo */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.kpi .label { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted, #6b6b76); }
+.kpi .value { font-size: 1.55rem; font-weight: 750; margin-top: 2px; }
+.kpi .sub { font-size: .82rem; margin-top: 2px; }
+.alert-list { list-style: none; padding: 0; margin: 0; }
+.alert-list li { padding: 7px 10px; border-radius: 8px; margin-bottom: 6px; font-size: .92rem; cursor: pointer; }
+.alert-list li.alto { background: #fdecea; }
+.alert-list li.medio { background: #fff4e0; }
+.alert-list li.baixo { background: #f1f1f6; }
 .badge-count {
   display: inline-block; min-width: 20px; padding: 0 6px; margin-left: 4px;
   border-radius: 10px; background: #fff; color: var(--brand); font-size: .75rem; font-weight: 700; text-align: center;
@@ -79,7 +98,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 80px; }
   box-shadow: var(--shadow); padding: 18px;
 }
 .card + .card { margin-top: 16px; }
-.grid > .card + .card { margin-top: 0; }
+.grid > .card + .card, .kpi-grid > .card + .card { margin-top: 0; }
 .grid { display: grid; gap: 16px; }
 .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }

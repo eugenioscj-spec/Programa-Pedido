@@ -873,6 +873,48 @@ const MIGRATIONS = [
       db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('rede_auto', '1')").run();
     },
   },
+  {
+    version: 17,
+    name: 'Cadastro completo das lojas (inauguração, m², aluguel, investimento, royalties, conta Itaú), feriados extras e registro de alterações',
+    up(db) {
+      const cols = db.prepare('PRAGMA table_info(locations)').all().map((c) => c.name);
+      const add = (name, type) => { if (!cols.includes(name)) db.exec(`ALTER TABLE locations ADD COLUMN ${name} ${type}`); };
+      add('cnpj', 'TEXT');
+      add('address', 'TEXT');
+      add('status', "TEXT NOT NULL DEFAULT 'ativa'");      // planejada | obras | ativa | fechada
+      add('opened_at', 'TEXT');                             // inauguração
+      add('closed_at', 'TEXT');
+      add('area_m2', 'REAL');
+      add('rent_cents', 'INTEGER');                         // aluguel mensal
+      add('capex_cents', 'INTEGER');                        // investimento total na loja
+      add('royalty_bp', 'INTEGER');                         // royalties: % × 100 (ex.: 600 = 6,00%)
+      add('marketing_bp', 'INTEGER');                       // fundo de marketing: % × 100
+      add('itau_account', 'TEXT');                          // agência/conta-dígito no Itaú
+      add('notes', 'TEXT');
+      // Dados já conhecidos (CLAUDE.md, confirmados pelo dono)
+      db.prepare("UPDATE locations SET cnpj = COALESCE(cnpj, '63532954000165'), itau_account = COALESCE(itau_account, '1364/97535-7') WHERE name = 'Loja 1 - Centro'").run();
+      db.prepare("UPDATE locations SET cnpj = COALESCE(cnpj, '63532954000246'), itau_account = COALESCE(itau_account, '4776/99822-3') WHERE name = 'Loja 2'").run();
+      db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('feriados_extras', '[]')").run();
+      // Registro de alterações: quem mudou o quê e quando (rotas do painel que gravam algo)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id          INTEGER PRIMARY KEY,
+          at          TEXT NOT NULL DEFAULT (datetime('now')),
+          admin_id    INTEGER,
+          user_name   TEXT,
+          method      TEXT NOT NULL,
+          path        TEXT NOT NULL,
+          area        TEXT,
+          action      TEXT,
+          status      INTEGER,
+          details     TEXT,
+          ip          TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_log(at);
+        CREATE INDEX IF NOT EXISTS idx_audit_area ON audit_log(area, at);
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

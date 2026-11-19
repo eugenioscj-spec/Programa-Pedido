@@ -95,6 +95,10 @@ function createApp(db, { testMode = false } = {}) {
   const redeSync = require('./rede-sync').createRedeSync(db);
   app.locals.redeSync = redeSync;
   const conciliacao = require('./conciliacao').createConciliacao(db);
+  const stores = require('./stores').createStores(db, accounts);
+  const executive = require('./executive').createExecutive(db, { analytics, accounts, cashflow, conciliacao });
+  const holidays = require('./holidays');
+  try { holidays.setExtras(JSON.parse(db.prepare("SELECT value FROM settings WHERE key = 'feriados_extras'").get()?.value || '[]')); } catch { holidays.setExtras([]); }
   const finance = createFinance(db, reports, { bankOpening: () => bank.openingTotal() });
   const loginLimiter = createLoginLimiter();
 
@@ -358,6 +362,8 @@ function createApp(db, { testMode = false } = {}) {
 
   const admin = express.Router();
   admin.use(requireAdmin);
+  const audit = require('./audit').createAudit(db);
+  admin.use(audit.middleware); // registro de alterações (quem gravou o quê e quando)
   app.use('/api/admin', admin);
 
   admin.get('/me', (req, res) => res.json({ admin: req.admin }));
@@ -1067,6 +1073,38 @@ function createApp(db, { testMode = false } = {}) {
     if (!redeLast) throw new BusinessError('Faça um teste de conexão antes.');
     res.attachment(`diagnostico-rede-${redeLast.date}.json`);
     res.type('application/json').send(JSON.stringify(redeLast, null, 1));
+  });
+
+  // ---------- admin: cadastro das lojas (ficha de cada unidade) ----------
+  admin.get('/lojas/cadastro', (req, res) => {
+    res.json({ stores: stores.list({ all: true }), cplug_stores: stores.cplugStores(), statuses: stores.STATUSES });
+  });
+  admin.post('/lojas/cadastro', (req, res) => res.status(201).json({ store: stores.save(null, req.body || {}, { create: true }) }));
+  admin.put('/lojas/cadastro/:id', (req, res) => res.json({ store: stores.save(idParam(req), req.body || {}) }));
+
+  // ---------- admin: painel executivo ----------
+  admin.get('/executivo', (req, res) => res.json(executive.overview()));
+
+  // ---------- admin: registro de alterações ----------
+  admin.get('/registro', (req, res) => {
+    const q = req.query;
+    res.json(audit.list({ from: T.isDate(String(q.from || '')) ? q.from : null, to: T.isDate(String(q.to || '')) ? q.to : null,
+      area: q.area || null, user: q.user || null, q: q.q ? String(q.q).slice(0, 80) : null, onlyOk: q.erros !== '1' }));
+  });
+
+  // ---------- admin: feriados (dia útil) ----------
+  admin.get('/feriados', (req, res) => {
+    const year = Number(req.query.year) || Number(T.localDate().slice(0, 4));
+    res.json({ year, holidays: holidays.list(year), extras: holidays.getExtras() });
+  });
+  admin.put('/feriados', (req, res) => {
+    const list = Array.isArray(req.body?.extras) ? req.body.extras : [];
+    for (const x of list) {
+      if (!/^(\d{4}-)?\d{2}-\d{2}$/.test(String(x?.date || ''))) throw new BusinessError(`Data inválida: ${x?.date || '(vazia)'}. Use AAAA-MM-DD, ou MM-DD para todo ano.`);
+    }
+    holidays.setExtras(list);
+    db.prepare("INSERT INTO settings (key, value) VALUES ('feriados_extras', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(holidays.getExtras()));
+    res.json({ extras: holidays.getExtras() });
   });
 
   // ---------- admin: Rede — rotina diária (guarda as vendas) ----------

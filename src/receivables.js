@@ -7,13 +7,15 @@
 // Cliente com prazo -1 (loja própria, ex.: Loja 2) não gera conta a receber.
 
 const T = require('./time');
+const holidays = require('./holidays');
 
 const RECEIVABLE_ACCOUNT = 'Recebimento de clientes B2B';
 
 // Próximo dia útil DEPOIS de `date` (pula sábado e domingo; feriados ainda não entram).
+// Próximo dia útil: pula sábado, domingo e feriados (src/holidays.js).
 function nextBusinessDay(date) {
   let d = T.addDays(date, 1);
-  while ([0, 6].includes(new Date(`${d}T12:00:00Z`).getUTCDay())) d = T.addDays(d, 1);
+  while (!holidays.isBusinessDay(d)) d = T.addDays(d, 1);
   return d;
 }
 

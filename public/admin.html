@@ -18,21 +18,12 @@
       </a>
       <span class="spacer"></span>
       <nav id="nav" class="hidden">
-        <button data-view="painel" data-roles="master">Painel</button>
-        <button data-view="pedidos" data-roles="master">Pedidos<span class="badge-count hidden" id="badge-novos"></span></button>
-        <button data-view="movimentar" data-roles="master">Entrada / Saída</button>
-        <button data-view="estoque" data-roles="master">Estoque</button>
-        <button data-view="movimentos" data-roles="master">Histórico</button>
-        <button data-view="relatorios" data-roles="master">Relatórios</button>
-        <button data-view="analises" data-roles="master">Análises</button>
-        <button data-view="vendas-lojas" data-roles="master">Vendas lojas</button>
-        <button data-view="conferencia" data-roles="master">Conferência</button>
-        <button data-view="financeiro" data-roles="master">Financeiro</button>
-        <button data-view="produtos" data-roles="master">Produtos</button>
-        <button data-view="clientes" data-roles="master">Clientes<span class="badge-count hidden" id="badge-clientes"></span></button>
-        <button data-view="crm" data-roles="master">CRM</button>
-        <button data-view="integracoes" data-roles="master">Integrações</button>
-        <button data-view="config" data-roles="master">Config.</button>
+        <button data-group="geral" data-roles="master">Visão geral</button>
+        <button data-group="lojas" data-roles="master">Lojas</button>
+        <button data-group="distribuicao" data-roles="master">Distribuição<span class="badge-count hidden" id="badge-dist"></span></button>
+        <button data-group="financeiro" data-roles="master">Financeiro</button>
+        <button data-group="relatorios" data-roles="master">Relatórios</button>
+        <button data-group="config" data-roles="master">Configurações</button>
         <button data-view="loja-estoque" data-roles="loja">Estoque da câmara</button>
         <button data-view="loja-repor" data-roles="loja">Repor loja</button>
         <button data-view="loja-cofre" data-roles="loja">Enviar ao cofre</button>
@@ -40,6 +31,7 @@
         <button id="btn-logout">Sair</button>
       </nav>
     </div>
+    <div id="subnav" class="subnav hidden"></div>
   </header>
 
   <main id="app">

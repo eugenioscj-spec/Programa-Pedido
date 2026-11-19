@@ -8,7 +8,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Render (plano pago, com disco `/data`, `DB_PATH=/data/oggi.db`). Publica sozinho a cada push na branch
   **`claude/oggi-sorvetes-b2b-ordering-lbo3ri`** (é nela que se trabalha; não há PR).
 - Node 22, Express 5, better-sqlite3, front-end em JS puro (`public/`). Testes: `npm test` (node:test) — rodar antes de enviar.
-- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 16.
+- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 17.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
   `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `ITAU_CLIENT_ID/SECRET`, `ITAU_CONTAS`
@@ -56,6 +56,14 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   Rotina Rede: guarda rede_sales/rede_days, refaz os 3 últimos dias, a partir das 6h de 8 em 8 h (setting rede_auto).
   Lojas ligadas: int_stores source 'rede' (107468247 → Loja 1, 107531038 → Loja 2); contas Itaú em settings conc_itau_contas.
   Validado com dados reais de 16/11 (Loja 2): tudo bate, depósito 17/11 = R$ 272,01. Só compara, não lança nada.
+- Organização (19/11/2026): menu por áreas (GROUPS em admin.js: Visão geral, Lojas, Distribuição, Financeiro, Relatórios,
+  Configurações; submenu na 2ª linha). Painel executivo (`src/executive.js`, rota /executivo): vendas das lojas (CPlug) mês ×
+  mesmo período do mês anterior, 12 meses, B2B, caixa, contas, conferência 7 dias, estoque, integrações e alertas; EBITDA
+  por loja ainda NÃO (depende das decisões contábeis). Cadastro das lojas (`src/stores.js`, migração 17: cnpj, status,
+  opened_at, area_m2, rent_cents, capex_cents, royalty_bp, marketing_bp, itau_account; liga CPlug/PV Rede; nova loja cria o
+  caixa). Feriados (`src/holidays.js`: nacionais + Carnaval/Sexta Santa/Corpus Christi + extras em settings feriados_extras)
+  usados por nextBusinessDay. Registro de alterações (`src/audit.js`, tabela audit_log): todo POST/PUT/PATCH/DELETE do
+  painel, sem senhas/chaves; tela em Configurações.
 - Recebimentos das vendas das lojas (decisão 14/11/2026, para quando os lançamentos forem ligados): dinheiro no mesmo dia
   (caixa da loja); débito e crédito no dia útil seguinte no **Itaú** (vendem antecipado); Pix no mesmo dia (banco a confirmar).
 
@@ -72,7 +80,8 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 11. Itaú: dono envia o e-mail ao gerente (chave pública) e depois faz a etapa 2 do programa + Render (Secret Files e variáveis).
 12. Estratégia (19/11/2026): meta de 20 lojas e venda por R$ 10 mi+ → proposta de menus por área, painel executivo, DRE por loja
     (EBITDA de loja), orçamento × realizado, fechamento mensal com trava, auditoria, cadastro de lojas (CAPEX, m², aluguel),
-    pacote de valuation (LTM, SSS, cohort). Aguardando o dono escolher por onde começar.
+    pacote de valuation (LTM, SSS, cohort). FEITO em 19/11: menus, cadastro de lojas, feriados, registro, painel executivo.
+    Falta: o dono preencher a ficha das lojas (inauguração, m², aluguel, investimento, royalties/marketing) e ligar o CPlug da Loja 1.
 10. Escala para ~20 lojas: avaliar API paga do CPlug (custo por acesso ou por loja — ele perguntou ao suporte), perfis de acesso
     para os sócios (contador = financeiro; sócio de Sinop = operacional; investidores = leitura), DRE semanal por loja com metas e
     alertas, relatório automático de segunda-feira, cópia de segurança fora do Render, feriados no "dia útil".

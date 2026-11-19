@@ -66,13 +66,38 @@ async function guard(fn) {
 const STORE_VIEWS = ['loja-estoque', 'loja-repor', 'loja-cofre'];
 const isMaster = () => A.admin && A.admin.role === 'master';
 
+// Menu por áreas: cada área tem suas telas (submenu na segunda linha do topo).
+const GROUPS = {
+  geral: { label: 'Visão geral', items: [['visao-geral', 'Painel executivo'], ['painel', 'Operação do dia']] },
+  lojas: { label: 'Lojas', items: [['vendas-lojas', 'Vendas'], ['conferencia', 'Conferência'], ['lojas', 'Cadastro das lojas']] },
+  distribuicao: { label: 'Distribuição', items: [['pedidos', 'Pedidos', 'badge-novos'], ['clientes', 'Clientes', 'badge-clientes'], ['crm', 'CRM'],
+    ['estoque', 'Estoque da câmara'], ['movimentar', 'Entrada / Saída'], ['movimentos', 'Histórico'], ['produtos', 'Produtos']] },
+  financeiro: { label: 'Financeiro', items: [['financeiro', 'Financeiro']] },
+  relatorios: { label: 'Relatórios', items: [['relatorios', 'Relatórios'], ['analises', 'Análises B2B']] },
+  config: { label: 'Configurações', items: [['integracoes', 'Integrações'], ['registro', 'Registro de alterações'], ['config', 'Configurações gerais']] },
+};
+const VIEW_GROUP = Object.fromEntries(Object.entries(GROUPS).flatMap(([g, x]) => x.items.map(([v]) => [v, g])));
+const BADGES = { 'badge-novos': 0, 'badge-clientes': 0 };
+
+function renderSubnav(view) {
+  const sub = $('#subnav');
+  const g = isMaster() ? VIEW_GROUP[view] : null;
+  $$('#nav [data-group]').forEach((b) => b.classList.toggle('active', b.dataset.group === g));
+  if (!g || GROUPS[g].items.length < 2) { sub.classList.add('hidden'); sub.innerHTML = ''; return; }
+  sub.classList.remove('hidden');
+  sub.innerHTML = `<div class="subnav-inner">${GROUPS[g].items.map(([v, label, badge]) => `<button data-subview="${v}" class="${v === view ? 'active' : ''}">${esc(label)}${badge ? `<span class="badge-count ${BADGES[badge] ? '' : 'hidden'}" id="${badge}">${BADGES[badge] || ''}</span>` : ''}</button>`).join('')}</div>`;
+  $$('#subnav [data-subview]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.subview)));
+}
+
 function setView(view) {
   if (!isMaster() && !STORE_VIEWS.includes(view)) view = 'loja-estoque';
-  if (isMaster() && STORE_VIEWS.includes(view)) view = 'painel';
+  if (isMaster() && (STORE_VIEWS.includes(view) || !VIEW_GROUP[view])) view = 'visao-geral';
   A.view = view;
   $$('#nav [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
+  renderSubnav(view);
   closeModal();
   const views = {
+    'visao-geral': renderExecutive,
     painel: renderDashboard,
     pedidos: renderOrders,
     movimentar: () => renderScanner(),
@@ -90,23 +115,27 @@ function setView(view) {
     integracoes: renderIntegrations,
     'vendas-lojas': renderStoreSales,
     conferencia: renderConciliation,
+    lojas: renderStoresRegistry,
+    registro: renderAudit,
     config: renderConfig,
   };
   try { history.replaceState(null, '', `#${view}`); } catch { /* ignore */ }
   window.scrollTo(0, 0);
-  guard(views[view] || renderDashboard);
+  guard(views[view] || renderExecutive);
 }
 
 async function refreshBadges() {
   try {
     const d = await api('/api/admin/dashboard');
-    const novos = d.counts.novo || 0;
-    const b1 = $('#badge-novos');
-    b1.textContent = novos;
-    b1.classList.toggle('hidden', !novos);
-    const b2 = $('#badge-clientes');
-    b2.textContent = d.pendingCustomers;
-    b2.classList.toggle('hidden', !d.pendingCustomers);
+    BADGES['badge-novos'] = d.counts.novo || 0;
+    BADGES['badge-clientes'] = d.pendingCustomers || 0;
+    for (const [id, n] of Object.entries(BADGES)) {
+      const b = $(`#${id}`);
+      if (b) { b.textContent = n; b.classList.toggle('hidden', !n); }
+    }
+    const g = $('#badge-dist');
+    const total = BADGES['badge-novos'] + BADGES['badge-clientes'];
+    if (g) { g.textContent = total; g.classList.toggle('hidden', !total); }
     return d;
   } catch { return null; }
 }
@@ -1990,6 +2019,193 @@ async function openDePara() {
 
 // ======================= VENDAS DAS LOJAS =======================
 const VL = { date: null };
+// ======================= PAINEL EXECUTIVO =======================
+// Os números da rede numa tela: vendas das lojas, distribuição, caixa, conferência, estoque e alertas.
+async function renderExecutive() {
+  const d = await api('/api/admin/executivo');
+  const t = d.stores_total;
+  const growth = (g) => (g === null || g === undefined ? '<span class="muted">sem comparação</span>'
+    : `<span class="${g >= 0 ? 'qty-pos' : 'qty-neg'}">${g >= 0 ? '▲' : '▼'} ${pct(Math.abs(g))}</span> <span class="muted">vs mesmo período do mês anterior</span>`);
+  const monthName = (ym) => new Date(`${ym}-15T12:00:00Z`).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  // gráfico: barras empilhadas por loja, últimos 12 meses (vendas do balcão)
+  const colors = ['#d6195b', '#7a2c8f', '#f08a24', '#1f9d8a', '#3a6fd8', '#8a8a96'];
+  const max = Math.max(1, ...d.chart.map((m) => m.stores.reduce((a, s) => a + s.cents, 0)));
+  const W = 760; const H = 200; const bw = W / d.chart.length;
+  const bars = d.chart.map((m, i) => {
+    let y = H;
+    const parts = m.stores.map((s, k) => {
+      const h = (s.cents / max) * (H - 20);
+      y -= h;
+      return h > 0 ? `<rect x="${i * bw + 6}" y="${y}" width="${bw - 12}" height="${h}" fill="${colors[k % colors.length]}"><title>${esc(s.name)} · ${esc(monthName(m.month))}: ${money(s.cents)}</title></rect>` : '';
+    }).join('');
+    return `${parts}<text x="${i * bw + bw / 2}" y="${H + 14}" text-anchor="middle" font-size="11" fill="#6b6b76">${esc(monthName(m.month))}</text>`;
+  }).join('');
+  const hasChart = d.chart.some((m) => m.stores.some((s) => s.cents));
+  const integ = (r, name) => (r ? `${r.status === 'erro' ? '❌' : r.status === 'parcial' ? '⚠️' : '✅'} ${name}: ${fmtDate(r.started_at)}` : `— ${name}: nunca buscou`);
+  app.innerHTML = `
+    <div class="section-head"><h1>Painel executivo</h1><span class="spacer"></span><span class="small muted">${fmtDate(d.today, false)} · mês até hoje</span></div>
+    ${d.alerts.length ? `<div class="card"><h2 style="margin-top:0">Atenção (${d.alerts.length})</h2><ul class="alert-list">
+      ${d.alerts.map((a) => `<li class="${a.level}" data-go="${esc(a.view || '')}">${a.level === 'alto' ? '🔴' : a.level === 'medio' ? '🟠' : '⚪'} ${esc(a.text)}</li>`).join('')}</ul></div>` : '<div class="alert alert-ok small">Nenhum alerta no momento.</div>'}
+
+    <h2>Lojas (balcão)</h2>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="label">Vendas no mês</div><div class="value">${money(t.mtd)}</div><div class="sub">${growth(t.growth)}</div></div>
+      <div class="card kpi"><div class="label">Hoje (até agora)</div><div class="value">${money(t.today)}</div><div class="sub muted">ontem: ${money(t.yesterday)}</div></div>
+      <div class="card kpi"><div class="label">Últimos 12 meses</div><div class="value">${money(t.ltm)}</div><div class="sub muted">base de qualquer valuation</div></div>
+      <div class="card kpi"><div class="label">Lojas ativas</div><div class="value">${d.stores.length}</div><div class="sub muted">meta: 20</div></div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table><thead><tr><th>Loja</th><th class="num">Hoje</th><th class="num">Ontem</th><th class="num">Mês</th><th class="num">Média/dia</th><th class="num">Vs mês anterior</th><th class="num">Aluguel % venda</th><th class="num">12 meses</th></tr></thead><tbody>
+        ${d.stores.map((s) => `<tr><td>${esc(s.name)}${s.linked ? '' : ' <span class="tag tag-low">sem CPlug</span>'}</td>
+          <td class="num">${money(s.today)}</td><td class="num">${money(s.yesterday)}</td><td class="num"><strong>${money(s.mtd)}</strong></td>
+          <td class="num">${s.avg_day === null ? '—' : money(s.avg_day)}</td>
+          <td class="num">${s.growth === null ? '—' : `<span class="${s.growth >= 0 ? 'qty-pos' : 'qty-neg'}">${s.growth >= 0 ? '▲' : '▼'} ${pct(Math.abs(s.growth))}</span>`}</td>
+          <td class="num">${s.rent_pct === null ? '<span class="muted">—</span>' : pct(s.rent_pct)}</td><td class="num">${money(s.ltm)}</td></tr>`).join('')}
+      </tbody></table></div>
+      ${hasChart ? `<h3 style="margin:14px 0 4px">Vendas por mês (12 meses)</h3>
+        <svg viewBox="0 0 ${W} ${H + 20}" style="width:100%;max-width:${W}px;height:auto">${bars}</svg>
+        <div class="small">${d.stores.map((s, k) => `<span style="display:inline-block;width:10px;height:10px;background:${colors[k % colors.length]};border-radius:2px"></span> ${esc(s.name)}`).join(' &nbsp; ')}</div>` : '<p class="small muted">O gráfico de 12 meses aparece conforme o CPlug for guardando os dias.</p>'}
+    </div>
+
+    <h2>Distribuição (câmara / B2B)</h2>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="label">Faturamento no mês</div><div class="value">${money(d.b2b.revenue)}</div><div class="sub">${growth(d.b2b.growth)}</div></div>
+      <div class="card kpi"><div class="label">Margem bruta</div><div class="value">${money(d.b2b.margin)}</div><div class="sub muted">${d.b2b.margin_pct === null ? '' : pct(d.b2b.margin_pct)}${d.b2b.uncosted ? ' · há venda sem custo' : ''}</div></div>
+      <div class="card kpi"><div class="label">Pedidos / clientes</div><div class="value">${d.b2b.orders} / ${d.b2b.buyers}</div><div class="sub muted">${d.b2b.open_orders} pedido(s) em andamento</div></div>
+      <div class="card kpi"><div class="label">A receber de clientes</div><div class="value">${money(d.b2b.receivable)}</div><div class="sub ${d.b2b.receivable_late ? 'qty-neg' : 'muted'}">${d.b2b.receivable_late ? `atrasado: ${money(d.b2b.receivable_late)}` : 'nada atrasado'}</div></div>
+    </div>
+
+    <h2>Caixa e contas</h2>
+    <div class="kpi-grid">
+      <div class="card kpi"><div class="label">Saldo em bancos e cofre</div><div class="value">${d.cash.total === null ? '—' : money(d.cash.total)}</div><div class="sub muted">cadastre os saldos iniciais em Financeiro</div></div>
+      <div class="card kpi"><div class="label">Menor saldo nos próximos 30 dias</div><div class="value ${d.cash.min30 && d.cash.min30.balance < 0 ? 'qty-neg' : ''}">${d.cash.min30 ? money(d.cash.min30.balance) : '—'}</div><div class="sub muted">${d.cash.min30 ? `em ${fmtDate(d.cash.min30.date, false)}` : ''}</div></div>
+      <div class="card kpi"><div class="label">A pagar em 7 dias</div><div class="value">${money(d.cash.payables_week)}</div><div class="sub ${d.cash.payables_late ? 'qty-neg' : 'muted'}">${d.cash.payables_late ? `vencido: ${money(d.cash.payables_late)}` : 'nada vencido'}</div></div>
+      <div class="card kpi"><div class="label">Estoque da câmara</div><div class="value">${Math.round(d.stock.boxes)} cx</div><div class="sub ${d.stock.uncosted ? 'qty-neg' : 'muted'}">${d.stock.uncosted ? `${d.stock.uncosted} produto(s) sem custo` : `valor: ${money(d.stock.value)}`}</div></div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card"><h2 style="margin-top:0">Conferência (últimos 7 dias)</h2>
+        ${d.conferencia.length ? `<table><tbody>${d.conferencia.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${c.checks ? `${c.ok}/${c.checks} batem` : '<span class="muted">sem dados</span>'}</td><td>${c.diff ? `<strong class="qty-neg">${c.diff} diferença(s)</strong>` : c.checks ? '✅' : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Sem lojas.</p>'}
+        <button class="btn-secondary btn-sm" data-go="conferencia" style="margin-top:8px">Abrir conferência</button></div>
+      <div class="card"><h2 style="margin-top:0">Integrações</h2>
+        <div class="small">${integ(d.integrations.cplug, 'CPlug')}<br>${integ(d.integrations.rede, 'Rede')}<br>${integ(d.integrations.itau, 'Itaú')}
+        ${d.certificate ? `<br>Certificado Itaú vale até ${fmtDate(d.certificate.valid_to, false)} (${d.certificate.days_left} dias)` : ''}</div></div>
+    </div>
+    <p class="small muted">Em breve: ${d.pending.map(esc).join(' ')}</p>`;
+  $$('[data-go]').forEach((el) => el.addEventListener('click', () => { if (el.dataset.go) setView(el.dataset.go); }));
+}
+
+// ======================= CADASTRO DAS LOJAS =======================
+async function renderStoresRegistry() {
+  const [d, f] = await Promise.all([api('/api/admin/lojas/cadastro'), api('/api/admin/feriados')]);
+  const statusName = { planejada: 'Planejada', obras: 'Em obras', ativa: 'Ativa', fechada: 'Fechada' };
+  const val = (v, fn) => (v === null || v === undefined || v === '' ? '<span class="muted">—</span>' : fn(v));
+  app.innerHTML = `
+    <div class="section-head"><h1>Cadastro das lojas</h1><span class="spacer"></span><button id="st-new">+ Nova loja</button></div>
+    <p class="small muted">A ficha de cada unidade: base da DRE por loja, do retorno do investimento e das conferências. Ligue aqui a loja do CPlug, o PV da Rede e a conta do Itaú.</p>
+    ${d.stores.map((s) => `
+      <div class="card">
+        <div class="section-head" style="margin:0"><h2 style="margin:0">${esc(s.name)} <span class="tag ${s.status === 'ativa' ? 'tag-ok' : 'tag-low'}">${statusName[s.status] || esc(s.status)}</span></h2>
+          <span class="spacer"></span><button class="btn-secondary btn-sm" data-st-edit="${s.id}">Editar</button></div>
+        <div class="grid grid-4 small" style="margin-top:10px;gap:8px 16px">
+          <div><span class="muted">CNPJ</span><br>${val(s.cnpj, fmtCnpj)}</div>
+          <div><span class="muted">Inauguração</span><br>${val(s.opened_at, (v) => `${fmtDate(v, false)}${s.months_open !== null ? ` (${s.months_open} meses)` : ''}`)}</div>
+          <div><span class="muted">Área</span><br>${val(s.area_m2, (v) => `${String(v).replace('.', ',')} m²`)}</div>
+          <div><span class="muted">Aluguel mensal</span><br>${val(s.rent_cents, money)}</div>
+          <div><span class="muted">Investimento (CAPEX)</span><br>${val(s.capex_cents, money)}</div>
+          <div><span class="muted">Royalties / marketing</span><br>${s.royalty_pct === null && s.marketing_pct === null ? '<span class="muted">—</span>' : `${s.royalty_pct ?? '—'}% / ${s.marketing_pct ?? '—'}%`}</div>
+          <div><span class="muted">CPlug</span><br>${s.cplug ? esc(s.cplug.name) : '<span class="qty-neg">não ligado</span>'}</div>
+          <div><span class="muted">Rede (PV)</span><br>${s.pvs.length ? s.pvs.map(esc).join(', ') : '<span class="qty-neg">sem PV</span>'}</div>
+          <div><span class="muted">Itaú</span><br>${val(s.itau_account, esc)}</div>
+          <div><span class="muted">Caixa da loja</span><br>${val(s.cash_account, esc)}</div>
+          <div style="grid-column:span 2"><span class="muted">Endereço</span><br>${val(s.address, esc)}</div>
+        </div>
+        ${s.missing.length ? `<p class="small" style="margin-bottom:0"><span class="tag tag-low">Falta preencher</span> ${s.missing.map(esc).join(', ')}</p>` : ''}
+      </div>`).join('')}
+    <div class="card">
+      <h2 style="margin-top:0">Feriados ${f.year}</h2>
+      <p class="small muted">Usados no "dia útil": depósitos da Rede e vencimento do B2B. Os nacionais e bancários (Carnaval, Sexta-feira Santa, Corpus Christi) já entram sozinhos.
+        Cadastre aqui os extras (municipais, pontes): <span class="mono">AAAA-MM-DD</span> para um dia, ou <span class="mono">MM-DD</span> para todo ano.</p>
+      <div class="small" style="columns:2">${f.holidays.map((h) => `<div>${fmtDate(h.date, false)} — ${esc(h.name)}${h.extra ? ' <span class="tag">extra</span>' : ''}</div>`).join('')}</div>
+      <div id="hol-extras" style="margin-top:10px">${f.extras.map((x, i) => `<div class="row" data-hol="${i}"><input value="${esc(x.date)}" data-hol-date style="max-width:140px"><input value="${esc(x.name)}" data-hol-name style="max-width:280px"><button class="btn-secondary btn-sm" data-hol-del="${i}">Remover</button></div>`).join('')}</div>
+      <div class="row" style="margin-top:6px"><input id="hol-date" placeholder="09-14 ou 2026-12-24" style="max-width:180px"><input id="hol-name" placeholder="Nome (ex.: Aniversário de Sinop)" style="max-width:280px">
+        <button class="btn-secondary btn-sm" id="hol-add">Adicionar</button><button class="btn-sm" id="hol-save">Salvar feriados</button></div>
+    </div>`;
+  $('#st-new').addEventListener('click', () => storeForm(null, d));
+  $$('[data-st-edit]').forEach((b) => b.addEventListener('click', () => storeForm(d.stores.find((s) => s.id === Number(b.dataset.stEdit)), d)));
+  const extras = () => $$('#hol-extras [data-hol]').map((r) => ({ date: r.querySelector('[data-hol-date]').value.trim(), name: r.querySelector('[data-hol-name]').value.trim() }));
+  const saveHol = (list) => guard(async () => { await api('/api/admin/feriados', { method: 'PUT', body: { extras: list } }); toast('Feriados salvos.'); renderStoresRegistry(); });
+  $('#hol-add').addEventListener('click', () => {
+    const date = $('#hol-date').value.trim(); const name = $('#hol-name').value.trim();
+    if (!date) return toast('Informe a data.', 'error');
+    return saveHol([...extras(), { date, name: name || 'Feriado' }]);
+  });
+  $('#hol-save').addEventListener('click', () => saveHol(extras()));
+  $$('[data-hol-del]').forEach((b) => b.addEventListener('click', () => saveHol(extras().filter((_, i) => i !== Number(b.dataset.holDel)))));
+}
+
+function storeForm(s, d) {
+  const v = (x) => (x === null || x === undefined ? '' : esc(String(x)));
+  const reais = (c) => (c === null || c === undefined ? '' : centsToInput(c));
+  const m = openModal(`
+    <div class="modal-head"><h2>${s ? `Editar ${esc(s.name)}` : 'Nova loja'}</h2><button class="modal-close" data-close>×</button></div>
+    <form id="st-form">
+      <div class="grid grid-2" style="gap:4px 14px">
+        <div class="field"><label>Nome</label><input name="name" value="${v(s && s.name)}" required></div>
+        <div class="field"><label>Situação</label><select name="status">${d.statuses.map((x) => `<option value="${x}" ${(s ? s.status : 'planejada') === x ? 'selected' : ''}>${{ planejada: 'Planejada', obras: 'Em obras', ativa: 'Ativa', fechada: 'Fechada' }[x]}</option>`).join('')}</select></div>
+        <div class="field"><label>CNPJ</label><input name="cnpj" value="${v(s && s.cnpj ? fmtCnpj(s.cnpj) : '')}"></div>
+        <div class="field"><label>Inauguração</label><input type="date" name="opened_at" value="${v(s && s.opened_at)}"></div>
+        <div class="field"><label>Área (m²)</label><input name="area_m2" inputmode="decimal" value="${v(s && s.area_m2 !== null && s.area_m2 !== undefined ? String(s.area_m2).replace('.', ',') : '')}"></div>
+        <div class="field"><label>Aluguel mensal (R$)</label><input name="rent_cents" inputmode="decimal" value="${reais(s && s.rent_cents)}"></div>
+        <div class="field"><label>Investimento total na loja (R$)</label><input name="capex_cents" inputmode="decimal" value="${reais(s && s.capex_cents)}"></div>
+        <div class="field"><label>Royalties (% do faturamento)</label><input name="royalty_pct" inputmode="decimal" value="${v(s && s.royalty_pct !== null ? String(s.royalty_pct).replace('.', ',') : '')}"></div>
+        <div class="field"><label>Fundo de marketing (%)</label><input name="marketing_pct" inputmode="decimal" value="${v(s && s.marketing_pct !== null ? String(s.marketing_pct).replace('.', ',') : '')}"></div>
+        <div class="field"><label>Conta Itaú (agência/conta-dígito)</label><input name="itau_account" placeholder="1364/97535-7" value="${v(s && s.itau_account)}"></div>
+        <div class="field"><label>Loja do CPlug</label><select name="cplug_store_id"><option value="">— nenhuma —</option>
+          ${d.cplug_stores.map((c) => `<option value="${c.id}" ${s && s.cplug && s.cplug.id === c.id ? 'selected' : ''} ${c.location_id && (!s || c.location_id !== s.id) ? 'disabled' : ''}>${esc(c.name)}${c.location_id && (!s || c.location_id !== s.id) ? ' (já ligada)' : ''}</option>`).join('')}</select></div>
+        <div class="field"><label>PV da Rede (um ou mais, separados por vírgula)</label><input name="pvs" inputmode="numeric" value="${v(s ? s.pvs.join(', ') : '')}"></div>
+      </div>
+      <div class="field"><label>Endereço</label><input name="address" value="${v(s && s.address)}"></div>
+      <div class="field"><label>Observações</label><textarea name="notes" rows="2">${v(s && s.notes)}</textarea></div>
+      <div class="row"><span class="spacer"></span><button type="button" class="btn-secondary" data-close>Cancelar</button><button type="submit">Salvar</button></div>
+    </form>`, { wide: true });
+  m.querySelector('#st-form').addEventListener('submit', (e) => guard(async () => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target).entries());
+    data.cplug_store_id = data.cplug_store_id ? Number(data.cplug_store_id) : null;
+    if (s) await api(`/api/admin/lojas/cadastro/${s.id}`, { method: 'PUT', body: data });
+    else await api('/api/admin/lojas/cadastro', { method: 'POST', body: data });
+    closeModal();
+    toast('Loja salva.');
+    renderStoresRegistry();
+  }));
+}
+
+// ======================= REGISTRO DE ALTERAÇÕES =======================
+const RG = { from: null, to: null, area: '', user: '', q: '' };
+async function renderAudit() {
+  if (!RG.to) { RG.to = todayLocal(); RG.from = addDaysLocal(RG.to, -6); }
+  const qs = new URLSearchParams({ from: RG.from, to: RG.to, area: RG.area, user: RG.user, q: RG.q });
+  const d = await api(`/api/admin/registro?${qs}`);
+  app.innerHTML = `
+    <div class="section-head"><h1>Registro de alterações</h1></div>
+    <p class="small muted">Tudo o que foi gravado pelo painel: quem, quando, onde e o que foi enviado (senhas e chaves nunca aparecem). Nada daqui pode ser apagado.</p>
+    <div class="row">
+      <input type="date" id="rg-from" value="${RG.from}" style="max-width:170px"><input type="date" id="rg-to" value="${RG.to}" style="max-width:170px">
+      <select id="rg-area" style="max-width:200px"><option value="">Todas as áreas</option>${d.areas.map((a) => `<option ${a === RG.area ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <select id="rg-user" style="max-width:200px"><option value="">Todas as pessoas</option>${d.users.map((a) => `<option ${a === RG.user ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <input id="rg-q" placeholder="Procurar (ex.: número do pedido)" value="${esc(RG.q)}" style="max-width:240px"><button class="btn-secondary btn-sm" id="rg-go">Filtrar</button>
+    </div>
+    <div class="card"><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Onde</th><th>Detalhes</th></tr></thead><tbody>
+      ${d.rows.map((r) => `<tr><td class="nowrap small">${fmtDate(r.at)}</td><td class="small">${esc(r.user_name || '—')}</td><td class="small">${esc(r.action || r.method)}</td>
+        <td class="small mono">${esc(r.method)} ${esc(r.path)}</td>
+        <td class="small">${r.details ? `<details><summary>ver</summary><pre style="white-space:pre-wrap;max-width:520px;font-size:.8rem">${esc(JSON.stringify(JSON.parse(r.details), null, 1))}</pre></details>` : '—'}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Nada no período.</td></tr>'}
+    </tbody></table></div>${d.rows.length >= 300 ? '<p class="small muted">Mostrando as 300 mais recentes: use os filtros.</p>' : ''}</div>`;
+  const go = () => { RG.from = $('#rg-from').value; RG.to = $('#rg-to').value; RG.area = $('#rg-area').value; RG.user = $('#rg-user').value; RG.q = $('#rg-q').value.trim(); guard(renderAudit); };
+  $('#rg-go').addEventListener('click', go);
+  ['#rg-from', '#rg-to', '#rg-area', '#rg-user'].forEach((id) => $(id).addEventListener('change', go));
+}
+
 // Conferência diária por loja: CPlug × Rede × Itaú (valor exato).
 const CF = { from: null, to: null };
 async function renderConciliation() {
@@ -3089,10 +3305,16 @@ async function boot() {
   const role = A.admin.role === 'master' ? 'master' : 'loja';
   $$('#nav [data-roles]').forEach((b) => b.classList.toggle('hidden', !b.dataset.roles.split(',').includes(role)));
   const initial = location.hash.slice(1);
-  setView(initial && $(`#nav [data-view="${initial}"]:not(.hidden)`) ? initial : (role === 'master' ? 'painel' : 'loja-estoque'));
+  const allowed = role === 'master' ? !!VIEW_GROUP[initial] : STORE_VIEWS.includes(initial);
+  setView(initial && allowed ? initial : (role === 'master' ? 'visao-geral' : 'loja-estoque'));
 }
 
 $$('#nav [data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view)));
+// área: abre a primeira tela dela (ou continua na atual, se já estiver nela)
+$$('#nav [data-group]').forEach((b) => b.addEventListener('click', () => {
+  const g = GROUPS[b.dataset.group];
+  setView(VIEW_GROUP[A.view] === b.dataset.group ? A.view : g.items[0][0]);
+}));
 $('#btn-logout').addEventListener('click', async () => {
   await api('/api/admin/logout', { method: 'POST' }).catch(() => {});
   A.admin = null;
