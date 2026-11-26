@@ -47,7 +47,10 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   antes). Token STS client_credentials (~5 min). Extrato grava em bank_transactions (mesma conciliação do OFX); `insertNew`
   no bank.js evita duplicar OFX × API por dia+valor. Rotina: a cada 3 h, 6h–22h, últimos 7 dias (setting itau_auto).
   Contas Itaú: MATRIZ (Loja 1) ag. 1364 c/c 97535-7; FILIAL (Loja 2) ag. 4776 c/c 99822-3 → ITAU_CONTAS="1364/0097535-7,4776/0099822-3". O dono gerou as chaves no programa do ZIP (caminho do analista) e vai
-  mandar a chave pública ao gerente pedindo Extrato + Pix cobrança + Boletos + DDA (sem pagamentos). OFX do Itaú: o parser
+  mandar a chave pública ao gerente pedindo Extrato + Pix cobrança + Boletos + DDA (sem pagamentos).
+  26/11/2026: Itaú abriu "Implantação Técnica do produto Conciliação Bancária" em análise — protocolos IT-000271752
+  (1364/97535-7) e IT-000271757 (1364/97535-7 e 4776/99822-3); razão social GELARE LOJA MT01 LTDA. Aguardando o e-mail
+  com os 3 valores criptografados (etapa 2 do programa) ou outra instrução do gerente. OFX do Itaú: o parser
   ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
 - Conferência (18/11/2026, menu "Conferência"; `src/conciliacao.js` + `src/rede-sync.js`, migração 16): VALOR EXATO
   (decisão do dono: diferença zero; se as inconsistências forem muitas, rever). Por loja e dia: crédito/débito CPlug × Rede
