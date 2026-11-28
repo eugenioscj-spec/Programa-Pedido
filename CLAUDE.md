@@ -57,6 +57,8 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   com Bearer token temporário; a resposta traz o .crt e "Secret: <uuid>" = Client Secret). Guarda em itau_credentials
   (migração 18; chave e secret com seal(), cifrados se ITAU_CRYPT_KEY existir; contas por credencial). Tela: Integrações →
   Itaú → "Gerar certificado com a planilha do Itaú". A rotina usa as credenciais do banco (senão, as variáveis do servidor).
+  28/11/2026: certificado GERADO pelo dono no sistema (credencial da matriz, contas 1364/97535-7 e 4776/99822-3), vale até
+  27/11/2027; token OAuth testado OK. Falta: escopos (até 2 dias úteis) → "Buscar extrato agora"; ver se a filial é coberta.
   Se o STS recusar o TLS, ITAU_TLS_INSECURE=1 (o programa oficial do Itaú não verifica o certificado do servidor). OFX do Itaú: o parser
   ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
 - Conferência (18/11/2026, menu "Conferência"; `src/conciliacao.js` + `src/rede-sync.js`, migração 16): VALOR EXATO
@@ -87,7 +89,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 7. Decisões contábeis antigas ainda não confirmadas: transferência às lojas como CMV das lojas; perdas no CMV; brindes como despesa.
 8. Bancos: cadastrar Itaú/Santander/Cofre com saldo inicial; depois conexão automática (Open Finance).
 9. O dono disse ter "outras alterações" a pedir (ex.: preços) — perguntar.
-11. Itaú: dono envia o e-mail ao gerente (chave pública) e depois faz a etapa 2 do programa + Render (Secret Files e variáveis).
+11. Itaú: certificado gerado (28/11). Testar "Buscar extrato agora" após liberação dos escopos (até 2 dias úteis); se a filial der 403, pedir à gerente.
 12. Estratégia (19/11/2026): meta de 20 lojas e venda por R$ 10 mi+ → proposta de menus por área, painel executivo, DRE por loja
     (EBITDA de loja), orçamento × realizado, fechamento mensal com trava, auditoria, cadastro de lojas (CAPEX, m², aluguel),
     pacote de valuation (LTM, SSS, cohort). FEITO em 19/11: menus, cadastro de lojas, feriados, registro, painel executivo.
