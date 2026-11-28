@@ -1886,7 +1886,7 @@ async function renderSantanderCard() {
       Os lançamentos entram em <strong>Financeiro → Bancos</strong>, sem duplicar com os OFX.</p>
     <ul class="small" style="padding-left:18px">
       ${flag(c.client_id, '<span class="mono">SANTANDER_CLIENT_ID</span>')}${flag(c.client_secret, '<span class="mono">SANTANDER_CLIENT_SECRET</span>')}
-      ${flag(c.cert && st.cert_check && st.cert_check.ok, '<span class="mono">SANTANDER_CERT_PFX</span> + <span class="mono">SANTANDER_CERT_SENHA</span>', st.cert_check && !st.cert_check.ok ? ` — <strong>${esc(st.cert_check.error)}</strong>` : c.cert ? ' — certificado abriu com a senha' : '')}
+      ${flag(c.cert && st.cert_check && st.cert_check.ok, '<span class="mono">SANTANDER_CERT_PFX</span> + <span class="mono">SANTANDER_CERT_SENHA</span>', st.cert_check && !st.cert_check.ok ? ` — <strong>${esc(st.cert_check.error)}</strong>` : c.cert ? ` — certificado abriu com a senha${st.cert_check && st.cert_check.subject ? `: ${esc(st.cert_check.subject)}` : ''}${st.cert_check && st.cert_check.valid_to ? `, vale até ${fmtDate(st.cert_check.valid_to, false)}` : ''}` : '')}
       ${flag(c.contas.length, '<span class="mono">SANTANDER_CONTAS</span>', c.contas.length ? ` — ${c.contas.map(esc).join(', ')}` : ' <strong>faltando</strong> (ex.: 4316.13005206-3)')}
       ${flag(st.ambiente === 'producao', '<span class="mono">SANTANDER_AMBIENTE</span>', st.ambiente === 'producao' ? ' = producao' : ' = sandbox (para as contas reais, use producao)')}
     </ul>

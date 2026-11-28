@@ -11,15 +11,24 @@ const { createBank } = require('../src/bank');
 const { createSantanderSync } = require('../src/santander-sync');
 const santander = require('../src/santander');
 
-const ENV = { SANTANDER_CLIENT_ID: ' cid ', SANTANDER_CLIENT_SECRET: 'sec', SANTANDER_AMBIENTE: 'producao', SANTANDER_CERT_PFX: Buffer.from('PFX').toString('base64'),
-  SANTANDER_CERT_SENHA: 'x', SANTANDER_CONTAS: '4316.13005206-3, 4316/130042277' };
+// certificado de teste no formato ANTIGO (RC2/3DES, como os e-CNPJ A1 da ICP-Brasil), que o Node sozinho recusa
+function legacyPfx(pass) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfx-'));
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem'), '-days', '400', '-subj', '/CN=GELARE LOJA MT01 LTDA:63532954000165'], { stdio: 'ignore' });
+  execFileSync('openssl', ['pkcs12', '-export', '-legacy', '-inkey', path.join(dir, 'k.pem'), '-in', path.join(dir, 'c.pem'), '-out', path.join(dir, 'a.pfx'), '-passout', `pass:${pass}`], { stdio: 'ignore' });
+  return fs.readFileSync(path.join(dir, 'a.pfx')).toString('base64');
+}
+let hasOpenssl = true;
+try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); } catch { hasOpenssl = false; }
+const ENV = { SANTANDER_CLIENT_ID: ' cid ', SANTANDER_CLIENT_SECRET: 'sec', SANTANDER_AMBIENTE: 'producao',
+  SANTANDER_CERT_PFX: hasOpenssl ? legacyPfx('x') : '', SANTANDER_CERT_SENHA: 'x', SANTANDER_CONTAS: '4316.13005206-3, 4316/130042277' };
 
 // formato real da produção (17/11/2026): datas dd/mm/aaaa, valor positivo + CREDITO/DEBITO
 const tx = (d, v, type, name, comp = '') => ({ transactionDate: d, amount: v, creditDebitType: type, transactionName: name, historicComplement: comp });
 function fakeSantander(pages, seen = []) {
   return async (o) => {
     seen.push(o);
-    assert.ok(o.pfx && o.passphrase === 'x', 'toda chamada com o e-CNPJ (mTLS)');
+    assert.ok(o.tlsOptions && (o.tlsOptions.key || o.tlsOptions.pfx), 'toda chamada com o e-CNPJ (mTLS)');
     if (o.url === santander.URLS.producao.token) {
       const p = new URLSearchParams(o.body);
       assert.equal(p.get('client_id'), 'cid', 'espaços colados são ignorados');
@@ -36,7 +45,7 @@ function fakeSantander(pages, seen = []) {
   };
 }
 
-test('Santander: extrato das duas contas (paginado), sinal pelo tipo, saldo 422 não atrapalha, sem duplicar', async () => {
+test('Santander: extrato das duas contas (paginado), sinal pelo tipo, saldo 422 não atrapalha, sem duplicar', { skip: !hasOpenssl && 'sem openssl' }, async () => {
   const db = openDatabase(':memory:');
   const bank = createBank(db);
   const full = Array.from({ length: 50 }, (_, i) => tx('21/11/2026', 1 + i, 'CREDITO', 'PIX RECEBIDO', `CLIENTE ${i}`));
@@ -68,15 +77,15 @@ test('Santander: conta em vários formatos, ambiente e erro claro sem variáveis
   assert.match(r.problems.join(' '), /SANTANDER_CLIENT_ID/);
 });
 
-let hasOpenssl = true;
-try { execFileSync('openssl', ['version'], { stdio: 'ignore' }); } catch { hasOpenssl = false; }
-test('Santander: confere se o certificado .pfx abre com a senha', { skip: !hasOpenssl && 'sem openssl' }, () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pfx-'));
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'k.pem'), '-out', path.join(dir, 'c.pem'), '-days', '2', '-subj', '/CN=teste'], { stdio: 'ignore' });
-  execFileSync('openssl', ['pkcs12', '-export', '-inkey', path.join(dir, 'k.pem'), '-in', path.join(dir, 'c.pem'), '-out', path.join(dir, 'a.pfx'), '-passout', 'pass:certa'], { stdio: 'ignore' });
-  const b64 = fs.readFileSync(path.join(dir, 'a.pfx')).toString('base64');
-  assert.equal(santander.certCheck(santander.config({ SANTANDER_CERT_PFX: b64, SANTANDER_CERT_SENHA: 'certa' })).ok, true);
+test('Santander: abre o .pfx no formato antigo da ICP-Brasil, mostra titular e validade; senha errada avisa', { skip: !hasOpenssl && 'sem openssl' }, () => {
+  const b64 = legacyPfx('certa');
+  const ok = santander.certCheck(santander.config({ SANTANDER_CERT_PFX: b64, SANTANDER_CERT_SENHA: 'certa' }));
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.match(ok.subject, /GELARE/);
+  assert.ok(ok.valid_to > '2027-01-01');
   const bad = santander.certCheck(santander.config({ SANTANDER_CERT_PFX: b64, SANTANDER_CERT_SENHA: 'errada' }));
   assert.equal(bad.ok, false);
   assert.match(bad.error, /senha/);
+  const cut = santander.certCheck(santander.config({ SANTANDER_CERT_PFX: b64.slice(0, 200), SANTANDER_CERT_SENHA: 'certa' }));
+  assert.equal(cut.ok, false);
 });

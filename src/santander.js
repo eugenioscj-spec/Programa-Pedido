@@ -52,14 +52,59 @@ function config(env = process.env) {
   };
 }
 
+// Abre o .pfx do e-CNPJ A1. Muitos certificados ICP-Brasil vêm com criptografia antiga (RC2/3DES) que o Node recusa
+// ("Unsupported PKCS12 PFX data"); nesse caso a node-forge (JavaScript puro) lê o arquivo e devolve chave e certificado
+// em PEM, que o Node aceita. Devolve { tls: opções para o https, subject, validTo }.
+function openPfx(pfxBase64, senha) {
+  const buf = Buffer.from(pfxBase64, 'base64');
+  if (!buf.length) throw new SantanderError('falta SANTANDER_CERT_PFX');
+  let info = {};
+  let pem = null;
+  try {
+    const forge = require('node-forge');
+    let p12;
+    try {
+      p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(buf.toString('binary')), senha || '');
+    } catch (e) {
+      if (/mac|password|decrypt|invalid/i.test(String(e.message))) throw new SantanderError('a senha do certificado não confere');
+      throw e;
+    }
+    const keyBags = [forge.pki.oids.pkcs8ShroudedKeyBag, forge.pki.oids.keyBag]
+      .flatMap((oid) => p12.getBags({ bagType: oid })[oid] || []).filter((b) => b.key);
+    const certBags = (p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || []).filter((b) => b.cert);
+    if (keyBags.length && certBags.length) {
+      const key = keyBags[0].key;
+      const leaf = certBags.find((b) => b.cert.publicKey.n && b.cert.publicKey.n.equals(key.n)) || certBags[0];
+      const chain = [leaf, ...certBags.filter((b) => b !== leaf)];
+      pem = { key: forge.pki.privateKeyToPem(key), cert: chain.map((b) => forge.pki.certificateToPem(b.cert)).join('') };
+      const cn = leaf.cert.subject.getField('CN');
+      info = { subject: cn ? cn.value : null, validTo: leaf.cert.validity.notAfter.toISOString().slice(0, 10) };
+    }
+  } catch (e) {
+    if (e instanceof SantanderError) throw e;
+    /* a forge não entendeu o arquivo: tenta o Node direto abaixo */
+  }
+  if (pem) {
+    tls.createSecureContext(pem); // confere se o Node aceita
+    return { tls: pem, ...info };
+  }
+  try {
+    tls.createSecureContext({ pfx: buf, passphrase: senha });
+    return { tls: { pfx: buf, passphrase: senha }, ...info };
+  } catch (e) {
+    if (/mac verify|password|bad decrypt/i.test(e.message)) throw new SantanderError('a senha do certificado não confere');
+    throw new SantanderError('o arquivo do certificado não abriu (confira se o texto em base64 foi colado inteiro)');
+  }
+}
+
 // Confere se o certificado abre com a senha (sem mostrar nada sigiloso).
 function certCheck(cfg) {
   if (!cfg.pfxBase64) return { ok: false, error: 'falta SANTANDER_CERT_PFX' };
   try {
-    tls.createSecureContext({ pfx: Buffer.from(cfg.pfxBase64, 'base64'), passphrase: cfg.senha });
-    return { ok: true };
+    const o = openPfx(cfg.pfxBase64, cfg.senha);
+    return { ok: true, subject: o.subject || null, valid_to: o.validTo || null };
   } catch (e) {
-    return { ok: false, error: /mac verify|password|bad decrypt/i.test(e.message) ? 'a senha do certificado não confere' : 'o arquivo do certificado não abriu (confira se o texto em base64 foi colado inteiro)' };
+    return { ok: false, error: e instanceof SantanderError ? e.message : 'o arquivo do certificado não abriu' };
   }
 }
 
@@ -70,10 +115,10 @@ function redact(v, depth = 0) {
   return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, SECRET.test(k) && typeof x !== 'object' ? '***' : redact(x, depth + 1)]));
 }
 
-function httpsCall({ url, method = 'GET', headers = {}, body, pfx, passphrase, timeoutMs = 45000 }) {
+function httpsCall({ url, method = 'GET', headers = {}, body, tlsOptions = {}, timeoutMs = 45000 }) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = https.request({ hostname: u.hostname, port: u.port || 443, path: `${u.pathname}${u.search}`, method, headers, pfx, passphrase }, (res) => {
+    const req = https.request({ hostname: u.hostname, port: u.port || 443, path: `${u.pathname}${u.search}`, method, headers, ...tlsOptions }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString('utf8') }));
@@ -88,13 +133,16 @@ function httpsCall({ url, method = 'GET', headers = {}, body, pfx, passphrase, t
 function createClient({ env = process.env, requestImpl = httpsCall } = {}) {
   const cfg = config(env);
   const log = [];
-  const pfx = cfg.pfxBase64 ? Buffer.from(cfg.pfxBase64, 'base64') : null;
+  let tlsOptions = null;
   async function call(opts, what) {
     if (!cfg.clientId || !cfg.clientSecret) throw new SantanderError('Faltam as variáveis SANTANDER_CLIENT_ID e SANTANDER_CLIENT_SECRET no servidor.');
-    if (!pfx) throw new SantanderError('Falta a variável SANTANDER_CERT_PFX (o certificado e-CNPJ A1 em base64) no servidor.');
+    if (!cfg.pfxBase64) throw new SantanderError('Falta a variável SANTANDER_CERT_PFX (o certificado e-CNPJ A1 em base64) no servidor.');
+    if (!tlsOptions) {
+      try { tlsOptions = openPfx(cfg.pfxBase64, cfg.senha).tls; } catch (e) { throw new SantanderError(`Certificado: ${e.message}`); }
+    }
     let r;
     try {
-      r = await requestImpl({ ...opts, pfx, passphrase: cfg.senha });
+      r = await requestImpl({ ...opts, tlsOptions });
     } catch (e) {
       const m = String(e.message || '');
       if (/mac verify|bad decrypt|password/i.test(m)) throw new SantanderError('A senha do certificado (SANTANDER_CERT_SENHA) não confere.');
@@ -176,4 +224,4 @@ function toTransaction(t) {
   };
 }
 
-module.exports = { createClient, config, certCheck, parseAccount, toTransaction, isoDate, httpsCall, SantanderError, URLS };
+module.exports = { createClient, config, certCheck, openPfx, parseAccount, toTransaction, isoDate, httpsCall, SantanderError, URLS };
