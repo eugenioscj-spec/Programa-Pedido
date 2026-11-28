@@ -93,6 +93,8 @@ function createApp(db, { testMode = false } = {}) {
   const itauSync = require('./itau-sync').createItauSync(db, bank);
   app.locals.itauSync = itauSync;
   const redeSync = require('./rede-sync').createRedeSync(db);
+  const santanderSync = require('./santander-sync').createSantanderSync(db, bank);
+  app.locals.santanderSync = santanderSync;
   app.locals.redeSync = redeSync;
   const conciliacao = require('./conciliacao').createConciliacao(db);
   const stores = require('./stores').createStores(db, accounts);
@@ -1105,6 +1107,36 @@ function createApp(db, { testMode = false } = {}) {
     holidays.setExtras(list);
     db.prepare("INSERT INTO settings (key, value) VALUES ('feriados_extras', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(JSON.stringify(holidays.getExtras()));
     res.json({ extras: holidays.getExtras() });
+  });
+
+  // ---------- admin: Santander (extrato pela API oficial, com o e-CNPJ A1) ----------
+  const santander = require('./santander');
+  let santanderLast = null;
+  admin.get('/integracoes/santander', (req, res) => {
+    const c = santander.config();
+    res.json({
+      ambiente: c.ambiente,
+      configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret, cert: !!c.pfxBase64, senha: !!c.senha, contas: c.accounts.map((a) => a.label) },
+      cert_check: c.pfxBase64 ? santander.certCheck(c) : null,
+      auto: db.prepare("SELECT value FROM settings WHERE key = 'santander_auto'").get()?.value !== '0',
+      runs: db.prepare("SELECT * FROM sync_runs WHERE source = 'santander' ORDER BY id DESC LIMIT 10").all(),
+      has_diagnostic: !!santanderLast,
+    });
+  });
+  admin.post('/integracoes/santander/buscar', async (req, res) => {
+    const days = Math.max(1, Math.min(90, Number(req.body?.days) || 7));
+    santanderLast = await santanderSync.run({ days, kind: 'manual', user: req.admin.name });
+    if (santanderLast.busy) throw new BusinessError('Já existe uma busca do Santander em andamento.');
+    res.json({ ...santanderLast, log: undefined });
+  });
+  admin.put('/integracoes/santander/automacao', (req, res) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('santander_auto', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(req.body?.auto ? '1' : '0');
+    res.json({ auto: !!req.body?.auto });
+  });
+  admin.get('/integracoes/santander/diagnostico', (req, res) => {
+    if (!santanderLast) throw new BusinessError('Faça uma busca antes.');
+    res.attachment('diagnostico-santander.json');
+    res.type('application/json').send(JSON.stringify(santanderLast, null, 1));
   });
 
   // ---------- admin: Rede — rotina diária (guarda as vendas) ----------

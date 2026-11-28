@@ -1743,9 +1743,11 @@ async function renderIntegrations() {
     </div>
     <div id="int-result">${r ? integrationResult(r) : ''}</div>
     <div class="card" id="rede-card"><div class="empty">Carregando…</div></div>
-    <div class="card" id="itau-card"><div class="empty">Carregando…</div></div>`;
+    <div class="card" id="itau-card"><div class="empty">Carregando…</div></div>
+    <div class="card" id="santander-card"><div class="empty">Carregando…</div></div>`;
   renderRedeCard();
   renderItauCard();
+  renderSantanderCard();
   renderAutoCard();
   $('#int-date').addEventListener('change', (e) => { INT.date = e.target.value; });
   const btn = $('#btn-int-test');
@@ -1864,6 +1866,57 @@ async function renderItauCard() {
       btn.disabled = false;
     }
     renderItauCard();
+  }));
+}
+
+// Santander: extrato pela API oficial (e-CNPJ A1). Grava em Financeiro → Bancos, como o Itaú e os OFX.
+let SANTANDER_RESULT = null;
+async function renderSantanderCard() {
+  const box = $('#santander-card');
+  if (!box) return;
+  const st = await api('/api/admin/integracoes/santander');
+  const c = st.configured;
+  const flag = (v, label, extra = '') => `<li>${v ? '✅' : '❌'} ${label}${extra}</li>`;
+  const ready = c.client_id && c.client_secret && c.cert && st.cert_check && st.cert_check.ok && c.contas.length;
+  const r = SANTANDER_RESULT;
+  const statusName = { ok: 'OK', parcial: 'Parcial', erro: 'Erro', rodando: 'Rodando' };
+  box.innerHTML = `
+    <h2 style="margin-top:0">Santander (extrato da conta)</h2>
+    <p class="small muted">API oficial do Santander (Portal do Desenvolvedor), com o certificado e-CNPJ A1 da empresa. Só leitura. Ambiente: <strong>${st.ambiente === 'producao' ? 'produção' : 'teste (sandbox)'}</strong>.
+      Os lançamentos entram em <strong>Financeiro → Bancos</strong>, sem duplicar com os OFX.</p>
+    <ul class="small" style="padding-left:18px">
+      ${flag(c.client_id, '<span class="mono">SANTANDER_CLIENT_ID</span>')}${flag(c.client_secret, '<span class="mono">SANTANDER_CLIENT_SECRET</span>')}
+      ${flag(c.cert && st.cert_check && st.cert_check.ok, '<span class="mono">SANTANDER_CERT_PFX</span> + <span class="mono">SANTANDER_CERT_SENHA</span>', st.cert_check && !st.cert_check.ok ? ` — <strong>${esc(st.cert_check.error)}</strong>` : c.cert ? ' — certificado abriu com a senha' : '')}
+      ${flag(c.contas.length, '<span class="mono">SANTANDER_CONTAS</span>', c.contas.length ? ` — ${c.contas.map(esc).join(', ')}` : ' <strong>faltando</strong> (ex.: 4316.13005206-3)')}
+      ${flag(st.ambiente === 'producao', '<span class="mono">SANTANDER_AMBIENTE</span>', st.ambiente === 'producao' ? ' = producao' : ' = sandbox (para as contas reais, use producao)')}
+    </ul>
+    <div class="row">
+      <div class="field"><label>Período</label><select id="sant-days"><option value="3">últimos 3 dias</option><option value="7" selected>últimos 7 dias</option><option value="30">últimos 30 dias</option><option value="60">últimos 60 dias</option></select></div>
+      <div class="field"><label>&nbsp;</label><button id="btn-sant" ${ready ? '' : 'disabled'}>Buscar extrato agora</button></div>
+      <div class="field"><label>&nbsp;</label><a class="btn btn-secondary ${st.has_diagnostic ? '' : 'hidden'}" href="/api/admin/integracoes/santander/diagnostico">Baixar diagnóstico</a></div>
+      <div class="field"><label>&nbsp;</label><label class="small"><input type="checkbox" id="sant-auto" ${st.auto ? 'checked' : ''}> Buscar sozinho a cada 3 horas (6h–22h)</label></div>
+    </div>
+    ${r ? (r.problems && r.problems.length && !(r.results || []).length ? `<div class="alert alert-error small"><strong>Não deu certo:</strong> ${r.problems.map(esc).join('<br>')}</div>`
+      : `<div class="alert alert-ok small">Extrato do Santander lido.${r.problems && r.problems.length ? ` Avisos: ${r.problems.map(esc).join('; ')}` : ''}</div>
+        <div class="table-wrap"><table><thead><tr><th>Conta</th><th class="num">Lançamentos lidos</th><th class="num">Novos</th><th class="num">Já existiam</th><th class="num">Saldo</th></tr></thead><tbody>
+        ${(r.results || []).map((x) => `<tr><td>${esc(x.conta)}</td><td class="num">${x.eventos}</td><td class="num">${x.new}</td><td class="num">${x.duplicate}</td><td class="num">${x.saldo_cents === null ? '—' : money(x.saldo_cents)}</td></tr>`).join('')}
+        </tbody></table></div>`) : ''}
+    ${st.runs.length ? `<details style="margin-top:8px"><summary class="small">Últimas buscas</summary><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>
+      ${st.runs.map((x) => `<tr><td class="small nowrap">${fmtDate(x.started_at)}</td><td class="small">${x.kind === 'auto' ? 'Automática' : 'Manual'}</td><td class="small">${statusName[x.status] || esc(x.status)}</td><td class="small">${esc(x.message || '')}</td></tr>`).join('')}
+      </tbody></table></div></details>` : ''}`;
+  $('#sant-auto').addEventListener('change', (e) => guard(async () => {
+    await api('/api/admin/integracoes/santander/automacao', { method: 'PUT', body: { auto: e.target.checked } });
+  }));
+  const btn = $('#btn-sant');
+  btn.addEventListener('click', () => guard(async () => {
+    btn.disabled = true;
+    btn.textContent = 'Consultando o Santander…';
+    try {
+      SANTANDER_RESULT = await api('/api/admin/integracoes/santander/buscar', { method: 'POST', body: { days: Number($('#sant-days').value) } });
+    } finally {
+      btn.disabled = false;
+    }
+    renderSantanderCard();
   }));
 }
 
@@ -2142,7 +2195,7 @@ async function renderExecutive() {
         ${d.conferencia.length ? `<table><tbody>${d.conferencia.map((c) => `<tr><td>${esc(c.name)}</td><td class="num">${c.checks ? `${c.ok}/${c.checks} batem` : '<span class="muted">sem dados</span>'}</td><td>${c.diff ? `<strong class="qty-neg">${c.diff} diferença(s)</strong>` : c.checks ? '✅' : ''}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Sem lojas.</p>'}
         <button class="btn-secondary btn-sm" data-go="conferencia" style="margin-top:8px">Abrir conferência</button></div>
       <div class="card"><h2 style="margin-top:0">Integrações</h2>
-        <div class="small">${integ(d.integrations.cplug, 'CPlug')}<br>${integ(d.integrations.rede, 'Rede')}<br>${integ(d.integrations.itau, 'Itaú')}
+        <div class="small">${integ(d.integrations.cplug, 'CPlug')}<br>${integ(d.integrations.rede, 'Rede')}<br>${integ(d.integrations.itau, 'Itaú')}<br>${integ(d.integrations.santander, 'Santander')}
         ${d.certificate ? `<br>Certificado Itaú vale até ${fmtDate(d.certificate.valid_to, false)} (${d.certificate.days_left} dias)` : ''}</div></div>
     </div>
     <p class="small muted">Em breve: ${d.pending.map(esc).join(' ')}</p>`;

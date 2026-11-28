@@ -12,7 +12,8 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
   `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `ITAU_CLIENT_ID/SECRET`, `ITAU_CONTAS`
-  (agência/conta-dígito) + Secret Files `itau.crt`/`itau.key`, `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
+  (agência/conta-dígito) + Secret Files `itau.crt`/`itau.key`, `SANTANDER_CLIENT_ID/SECRET/AMBIENTE/CERT_PFX/CERT_SENHA/CONTAS`
+  (mesmos nomes da consultoria), `REDE_AMBIENTE` (sandbox|producao), `REDE_PVS`, `ADMIN_EMAIL/PASSWORD` (apagar depois de usar).
 
 ## Decisões já tomadas (não mudar sem perguntar)
 - Regra do dono: não decidir sozinho nada que mude números contábeis; planejar e esperar o OK.
@@ -61,6 +62,13 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   27/11/2027; token OAuth testado OK. Falta: escopos (até 2 dias úteis) → "Buscar extrato agora"; ver se a filial é coberta.
   Se o STS recusar o TLS, ITAU_TLS_INSECURE=1 (o programa oficial do Itaú não verifica o certificado do servidor). OFX do Itaú: o parser
   ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
+- Santander (28/11/2026): `src/santander.js` + `src/santander-sync.js` (Integrações → Santander), porte do que funcionou em
+  produção na consultoria com a GELARE (17/11): mTLS com o e-CNPJ A1 (.pfx em base64 + senha), token trust-open
+  .../auth/oauth/v2/token, extrato GET .../bank_account_information/v1/transactions/{agência.conta 4+12 dígitos}
+  ?initialDate&finalDate&_limit=50&_offset=N (datas dd/mm/aaaa, amount positivo + creditDebitType); saldo dá 422 em
+  produção (ignorado). Grava em bank_transactions (bank_code 033), a cada 3 h 6h–22h, setting santander_auto.
+  Plano do dono: tirar a GELARE da consultoria (copiar as variáveis de lá para cá + as 2 contas Santander das lojas) e,
+  na consultoria, trocar pelos dados da cliente (Armazém) na reunião.
 - Conferência (18/11/2026, menu "Conferência"; `src/conciliacao.js` + `src/rede-sync.js`, migração 16): VALOR EXATO
   (decisão do dono: diferença zero; se as inconsistências forem muitas, rever). Por loja e dia: crédito/débito CPlug × Rede
   (bruto aprovado); Pix CPlug × "PIX QR CODE RECEBIDO" no Itaú da loja; depósito: líquido do débito + crédito antecipado

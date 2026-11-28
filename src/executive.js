@@ -83,7 +83,7 @@ function createExecutive(db, { analytics, accounts, cashflow, conciliacao }) {
 
     // ---- integrações ----
     const lastRun = (source) => db.prepare('SELECT source, kind, status, started_at, message FROM sync_runs WHERE source = ? ORDER BY id DESC LIMIT 1').get(source) || null;
-    const integrations = { cplug: lastRun('cplug'), rede: lastRun('rede'), itau: lastRun('itau') };
+    const integrations = { cplug: lastRun('cplug'), rede: lastRun('rede'), itau: lastRun('itau'), santander: lastRun('santander') };
     let cert = itau.certInfo(itau.config());
     const dbCert = db.prepare('SELECT MIN(valid_to) v FROM itau_credentials WHERE active = 1 AND valid_to IS NOT NULL').get();
     if (dbCert && dbCert.v) cert = { cert_found: true, valid_to: dbCert.v, days_left: Math.floor((Date.parse(`${dbCert.v}T23:59:59Z`) - Date.now()) / 86400000) };
@@ -95,7 +95,7 @@ function createExecutive(db, { analytics, accounts, cashflow, conciliacao }) {
     if (payables.late) add('alto', `Contas a pagar vencidas: ${(payables.late / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, 'financeiro');
     if (rec.late) add('medio', `Clientes B2B com pagamento atrasado: ${(rec.late / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`, 'financeiro');
     if (proj && proj.first_negative) add('alto', `O caixa projetado fica negativo em ${String(proj.first_negative.date).split('-').reverse().join('/')}.`, 'financeiro');
-    for (const [k, r] of Object.entries(integrations)) if (r && r.status === 'erro') add('medio', `Última busca ${k === 'cplug' ? 'do CPlug' : k === 'rede' ? 'da Rede' : 'do Itaú'} deu erro.`, 'integracoes');
+    for (const [k, r] of Object.entries(integrations)) if (r && r.status === 'erro') add('medio', `Última busca ${k === 'cplug' ? 'do CPlug' : k === 'rede' ? 'da Rede' : k === 'santander' ? 'do Santander' : 'do Itaú'} deu erro.`, 'integracoes');
     if (cert.cert_found && cert.days_left !== undefined && cert.days_left <= 30) add('alto', `O certificado do Itaú vence em ${cert.days_left} dias: renove no Itaú for Developers.`, 'integracoes');
     if (stock.uncosted) add('medio', `${stock.uncosted} produto(s) com estoque sem custo: o CMV e a margem ficam incompletos.`, 'estoque');
     for (const s of stores) if (!s.linked) add('baixo', `${s.name}: sem loja do CPlug ligada (cadastre em Lojas).`, 'lojas');

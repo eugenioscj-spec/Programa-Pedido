@@ -53,6 +53,7 @@ const app = createApp(db, { testMode });
 app.locals.sync.start();
 app.locals.itauSync.start();
 app.locals.redeSync.start();
+app.locals.santanderSync.start();
 
 const server = app.listen(PORT, () => {
   console.log(`Oggi Pedidos B2B rodando em http://localhost:${PORT}`);
