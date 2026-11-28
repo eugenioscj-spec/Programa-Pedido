@@ -84,7 +84,9 @@ function createExecutive(db, { analytics, accounts, cashflow, conciliacao }) {
     // ---- integrações ----
     const lastRun = (source) => db.prepare('SELECT source, kind, status, started_at, message FROM sync_runs WHERE source = ? ORDER BY id DESC LIMIT 1').get(source) || null;
     const integrations = { cplug: lastRun('cplug'), rede: lastRun('rede'), itau: lastRun('itau') };
-    const cert = itau.certInfo(itau.config());
+    let cert = itau.certInfo(itau.config());
+    const dbCert = db.prepare('SELECT MIN(valid_to) v FROM itau_credentials WHERE active = 1 AND valid_to IS NOT NULL').get();
+    if (dbCert && dbCert.v) cert = { cert_found: true, valid_to: dbCert.v, days_left: Math.floor((Date.parse(`${dbCert.v}T23:59:59Z`) - Date.now()) / 86400000) };
 
     // ---- alertas ----
     const alerts = [];

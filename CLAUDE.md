@@ -8,7 +8,7 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
 - Render (plano pago, com disco `/data`, `DB_PATH=/data/oggi.db`). Publica sozinho a cada push na branch
   **`claude/oggi-sorvetes-b2b-ordering-lbo3ri`** (é nela que se trabalha; não há PR).
 - Node 22, Express 5, better-sqlite3, front-end em JS puro (`public/`). Testes: `npm test` (node:test) — rodar antes de enviar.
-- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 17.
+- Migrações versionadas em `src/migrations.js` (cópia de segurança automática antes de migrar). Hoje: versão 18.
 - Datas sempre por `src/time.js`. Kardex imutável (correção = estorno). Dinheiro em centavos.
 - Variáveis no Render (o usuário cadastra; nunca pedir no chat): `CPLUG_EMPRESA/USUARIO/SENHA`,
   `REDE_CLIENT_ID/SECRET`, `REDE_USUARIO/SENHA` (produção), `ITAU_CLIENT_ID/SECRET`, `ITAU_CONTAS`
@@ -50,7 +50,14 @@ Conversar sempre em português, com linguagem simples (o usuário não é progra
   mandar a chave pública ao gerente pedindo Extrato + Pix cobrança + Boletos + DDA (sem pagamentos).
   26/11/2026: Itaú abriu "Implantação Técnica do produto Conciliação Bancária" em análise — protocolos IT-000271752
   (1364/97535-7) e IT-000271757 (1364/97535-7 e 4776/99822-3); razão social GELARE LOJA MT01 LTDA. Aguardando o e-mail
-  com os 3 valores criptografados (etapa 2 do programa) ou outra instrução do gerente. OFX do Itaú: o parser
+  com os 3 valores criptografados (etapa 2 do programa) ou outra instrução do gerente.
+  28/11/2026: o Itaú mandou (fluxo "varejo") uma PLANILHA com Client ID de produção + TOKEN TEMPORÁRIO por CNPJ (vale 7 dias;
+  escopos liberados em até 2 dias úteis; NÃO criar credencial nova no portal). O sistema gera o certificado sozinho
+  (`src/itau-cert.js`: chave RSA 2048 + CSR igual ao programa oficial, POST sts.itau.com.br/seguranca/v1/certificado/solicitacao
+  com Bearer token temporário; a resposta traz o .crt e "Secret: <uuid>" = Client Secret). Guarda em itau_credentials
+  (migração 18; chave e secret com seal(), cifrados se ITAU_CRYPT_KEY existir; contas por credencial). Tela: Integrações →
+  Itaú → "Gerar certificado com a planilha do Itaú". A rotina usa as credenciais do banco (senão, as variáveis do servidor).
+  Se o STS recusar o TLS, ITAU_TLS_INSECURE=1 (o programa oficial do Itaú não verifica o certificado do servidor). OFX do Itaú: o parser
   ignora linhas "SALDO ..." e aceita UTF-8 declarado como 1252.
 - Conferência (18/11/2026, menu "Conferência"; `src/conciliacao.js` + `src/rede-sync.js`, migração 16): VALOR EXATO
   (decisão do dono: diferença zero; se as inconsistências forem muitas, rever). Por loja e dia: crédito/débito CPlug × Rede

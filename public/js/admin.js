@@ -1772,17 +1772,43 @@ async function renderItauCard() {
   const certLine = c.cert_found
     ? (c.valid_to ? ` — vale até <strong>${fmtDate(c.valid_to, false)}</strong>${c.days_left <= 30 ? ` <span class="qty-neg"><strong>(faltam ${c.days_left} dias: renove no Itaú for Developers!)</strong></span>` : ` (faltam ${c.days_left} dias)`}` : ` — ${esc(c.cert_error || '')}`)
     : ' <strong>faltando</strong> (Secret File itau.crt)';
-  const ready = st.configured.client_id && st.configured.client_secret && c.cert_found && c.key_found && st.configured.contas.length;
+  const creds = st.credentials || [];
+  const ready = creds.length > 0 || (st.configured.client_id && st.configured.client_secret && c.cert_found && c.key_found && st.configured.contas.length);
+  const certTxt = (x) => (x.valid_to ? `vale até <strong>${fmtDate(x.valid_to, false)}</strong>${x.days_left <= 30 ? ` <span class="qty-neg"><strong>(faltam ${x.days_left} dias: renove!)</strong></span>` : ` (faltam ${x.days_left} dias)`}` : '');
   const r = ITAU_RESULT;
   const statusName = { ok: 'OK', parcial: 'Parcial', erro: 'Erro', rodando: 'Rodando' };
   box.innerHTML = `
     <h2 style="margin-top:0">Itaú (extrato e saldo da conta)</h2>
     <p class="small muted">API oficial do Itaú, só leitura. Os lançamentos entram em <strong>Financeiro → Bancos</strong>, junto com os OFX, sem duplicar; a conciliação continua sendo feita lá.</p>
-    <ul class="small" style="padding-left:18px">
+    ${creds.length ? `<div class="table-wrap"><table><thead><tr><th>Credencial</th><th>Client ID</th><th>Contas</th><th>Certificado</th><th></th></tr></thead><tbody>
+      ${creds.map((x) => `<tr><td>${esc(x.label || '—')}${x.cnpj ? `<div class="small muted">${esc(fmtCnpj(x.cnpj))}</div>` : ''}</td><td class="mono small">${esc(x.client_id)}</td>
+        <td class="small">${x.accounts.map(esc).join('<br>')}</td><td class="small">✅ ${certTxt(x)}${x.has_secret ? '' : '<div class="qty-neg">sem Client Secret</div>'}</td>
+        <td><button class="btn-secondary btn-sm" data-itau-del="${x.id}">Desativar</button></td></tr>`).join('')}
+      </tbody></table></div>`
+    : !(st.configured.client_id || c.cert_found) ? '<p class="small"><strong>Ainda sem credencial.</strong> Gere o certificado abaixo com a planilha que o Itaú mandou.</p>'
+    : `<ul class="small" style="padding-left:18px">
       ${flag(st.configured.client_id, '<span class="mono">ITAU_CLIENT_ID</span>')}${flag(st.configured.client_secret, '<span class="mono">ITAU_CLIENT_SECRET</span>')}
       ${flag(c.cert_found, 'certificado <span class="mono">itau.crt</span>', certLine)}${flag(c.key_found, 'chave <span class="mono">itau.key</span>', c.key_found ? '' : ' <strong>faltando</strong> (Secret File)')}
       ${flag(st.configured.contas.length, '<span class="mono">ITAU_CONTAS</span>', st.configured.contas.length ? ` — ${st.configured.contas.map(esc).join(', ')}` : ' <strong>faltando</strong> (ex.: 1234/0012345-6)')}
-    </ul>
+    </ul>`}
+    <details ${creds.length ? '' : 'open'} style="margin:10px 0"><summary><strong>Gerar certificado com a planilha do Itaú</strong> (Client ID + token temporário)</summary>
+      <p class="small muted">Use uma linha da planilha que o Itaú mandou por e-mail. O token temporário vale <strong>7 dias</strong> e só serve para gerar o certificado.
+        O sistema cria a chave, pede o certificado ao Itaú e guarda tudo; o Client Secret vem junto e fica guardado. Nada disso aparece na tela nem no registro de alterações.</p>
+      <form id="itau-cert-form">
+        <div class="grid grid-2" style="gap:4px 14px">
+          <div class="field"><label>Nome desta credencial</label><input name="label" placeholder="Ex.: Matriz (Loja 1)"></div>
+          <div class="field"><label>CNPJ da linha da planilha</label><input name="cnpj" placeholder="63.532.954/0001-65"></div>
+          <div class="field"><label>Client ID</label><input name="client_id" required autocomplete="off"></div>
+          <div class="field"><label>Token temporário</label><input name="token" type="password" required autocomplete="off"></div>
+          <div class="field"><label>Nome da empresa (sem acento)</label><input name="organization" value="GELARE LOJA MT01 LTDA" required></div>
+          <div class="field"><label>Cidade / UF</label><div class="row"><input name="city" value="SINOP" required style="max-width:200px"><input name="state" value="MT" required style="max-width:70px"></div></div>
+        </div>
+        <div class="field"><label>Contas desta credencial</label>
+          ${st.store_accounts.map((a) => `<label class="small" style="display:block"><input type="checkbox" name="accounts" value="${esc(a.itau_account)}"> ${esc(a.itau_account)} — ${esc(a.name)}${a.cnpj ? ` (${esc(fmtCnpj(a.cnpj))})` : ''}</label>`).join('') || '<span class="small muted">Cadastre a conta do Itaú em Lojas → Cadastro das lojas.</span>'}
+          <input name="accounts_extra" placeholder="Outra conta (agência/conta-dígito), se precisar" style="max-width:320px;margin-top:4px"></div>
+        <button type="submit" id="btn-itau-cert">Gerar certificado</button>
+      </form>
+    </details>
     <div class="row">
       <div class="field"><label>Período</label><select id="itau-days"><option value="3">últimos 3 dias</option><option value="7" selected>últimos 7 dias</option><option value="30">últimos 30 dias</option><option value="60">últimos 60 dias</option></select></div>
       <div class="field"><label>&nbsp;</label><button id="btn-itau" ${ready ? '' : 'disabled'}>Buscar extrato agora</button></div>
@@ -1797,6 +1823,34 @@ async function renderItauCard() {
     ${st.runs.length ? `<details style="margin-top:8px"><summary class="small">Últimas buscas</summary><div class="table-wrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Situação</th><th>Detalhe</th></tr></thead><tbody>
       ${st.runs.map((x) => `<tr><td class="small nowrap">${fmtDate(x.started_at)}</td><td class="small">${x.kind === 'auto' ? 'Automática' : 'Manual'}</td><td class="small">${statusName[x.status] || esc(x.status)}</td><td class="small">${esc(x.message || '')}</td></tr>`).join('')}
       </tbody></table></div></details>` : ''}`;
+  $$('[data-itau-del]').forEach((b) => b.addEventListener('click', () => guard(async () => {
+    if (!confirm('Desativar esta credencial do Itaú? O sistema para de buscar o extrato com ela.')) return;
+    await api(`/api/admin/integracoes/itau/certificado/${b.dataset.itauDel}`, { method: 'DELETE' });
+    renderItauCard();
+  })));
+  // marca sozinho as contas da loja com o mesmo CNPJ digitado
+  const form = $('#itau-cert-form');
+  form.cnpj.addEventListener('change', () => {
+    const d = form.cnpj.value.replace(/\D/g, '');
+    st.store_accounts.forEach((a, i) => { const cb = form.querySelectorAll('[name=accounts]')[i]; if (cb && d) cb.checked = String(a.cnpj || '') === d; });
+  });
+  form.addEventListener('submit', (e) => guard(async () => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const accounts = [...fd.getAll('accounts'), ...String(fd.get('accounts_extra') || '').split(/[,;]+/)].map((x) => String(x).trim()).filter(Boolean);
+    const btn = $('#btn-itau-cert');
+    btn.disabled = true;
+    btn.textContent = 'Pedindo o certificado ao Itaú…';
+    try {
+      const r = await api('/api/admin/integracoes/itau/certificado', { method: 'POST', body: {
+        label: fd.get('label'), cnpj: fd.get('cnpj'), client_id: fd.get('client_id'), token: fd.get('token'),
+        organization: fd.get('organization'), city: fd.get('city'), state: fd.get('state'), accounts } });
+      alert(`Certificado gerado! Vale até ${fmtDate(r.valid_to, false)}.\n${r.secret_received ? 'O Client Secret veio junto e ficou guardado.' : 'ATENÇÃO: o Itaú não mandou o Client Secret. Avise o suporte do sistema.'}\n${r.token_ok ? 'Acesso testado: OK.' : `Teste de acesso ainda não passou${r.token_error ? ` (${r.token_error})` : ''}. O Itaú avisa que as permissões levam até 2 dias úteis.`}`);
+    } finally {
+      btn.disabled = false;
+    }
+    renderItauCard();
+  }));
   $('#itau-auto').addEventListener('change', (e) => guard(async () => {
     await api('/api/admin/integracoes/itau/automacao', { method: 'PUT', body: { auto: e.target.checked } });
   }));

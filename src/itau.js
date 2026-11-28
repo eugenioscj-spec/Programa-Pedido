@@ -97,13 +97,24 @@ function httpsCall({ url, method = 'GET', headers = {}, body, cert, key, ca, tim
   });
 }
 
-function createClient({ env = process.env, requestImpl = httpsCall } = {}) {
+// cred (opcional) = credencial guardada no banco: { clientId, clientSecret, certPem, keyPem, accounts: ['1364/97535-7', ...] }.
+// Sem cred, usa as variáveis do servidor (ITAU_CLIENT_ID, ITAU_CLIENT_SECRET, ITAU_CONTAS e os Secret Files).
+function createClient({ env = process.env, requestImpl = httpsCall, cred = null } = {}) {
   const cfg = config(env);
+  if (cred) {
+    cfg.clientId = cred.clientId;
+    cfg.clientSecret = cred.clientSecret;
+    cfg.accounts = (cred.accounts || []).map(parseAccount).filter(Boolean);
+  }
   const log = [];
   let creds = null;
   const loadCreds = () => {
     if (creds) return creds;
-    if (!cfg.clientId || !cfg.clientSecret) throw new ItauError('Faltam as variáveis ITAU_CLIENT_ID e ITAU_CLIENT_SECRET no servidor.');
+    if (!cfg.clientId || !cfg.clientSecret) throw new ItauError(cred ? 'A credencial do Itaú está sem Client Secret: gere o certificado de novo.' : 'Faltam as variáveis ITAU_CLIENT_ID e ITAU_CLIENT_SECRET no servidor.');
+    if (cred) {
+      creds = { cert: Buffer.from(cred.certPem), key: Buffer.from(cred.keyPem), ca: env.ITAU_CA_PATH ? fs.readFileSync(env.ITAU_CA_PATH) : undefined };
+      return creds;
+    }
     let cert; let key;
     try { cert = fs.readFileSync(cfg.certPath); } catch { throw new ItauError(`Não achei o certificado do Itaú (${cfg.certPath}). Cadastre o arquivo itau.crt em Secret Files no Render.`); }
     try { key = fs.readFileSync(cfg.keyPath); } catch { throw new ItauError(`Não achei a chave do certificado (${cfg.keyPath}). Cadastre o arquivo itau.key em Secret Files no Render.`); }

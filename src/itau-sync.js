@@ -10,7 +10,21 @@ const itau = require('./itau');
 
 function createItauSync(db, bank, { env = process.env, requestImpl, log = console.log } = {}) {
   let running = null;
+  const cert = require('./itau-cert');
+  // Credenciais: as geradas pelo sistema (banco) ou, se não houver, a das variáveis do servidor.
+  function credentials() {
+    const rows = db.prepare('SELECT * FROM itau_credentials WHERE active = 1 ORDER BY id').all();
+    if (rows.length) {
+      return rows.map((r) => ({
+        id: r.id, label: r.label || r.cnpj || `Credencial ${r.id}`,
+        cred: { clientId: r.client_id, clientSecret: cert.unseal(r.client_secret, env), certPem: r.cert_pem, keyPem: cert.unseal(r.key_pem, env),
+          accounts: String(r.accounts || '').split(/[,;]+/).map((x) => x.trim()).filter(Boolean) },
+      }));
+    }
+    return [{ id: null, label: 'variáveis do servidor', cred: null }];
+  }
   const configured = () => {
+    if (db.prepare('SELECT 1 FROM itau_credentials WHERE active = 1').get()) return true;
     const c = itau.config(env);
     return !!(c.clientId && c.clientSecret && c.accounts.length);
   };
@@ -21,29 +35,35 @@ function createItauSync(db, bank, { env = process.env, requestImpl, log = consol
     const start = startDate || T.addDays(end, -(Math.max(1, Math.min(90, Number(days) || 7)) - 1));
     const runId = Number(db.prepare("INSERT INTO sync_runs (source, kind, dates) VALUES ('itau', ?, ?)").run(kind, `${start},${end}`).lastInsertRowid);
     running = { id: runId };
-    const client = itau.createClient({ env, ...(requestImpl ? { requestImpl } : {}) });
     const results = [];
     const problems = [];
+    const logs = [];
     try {
-      if (!client.config.accounts.length) throw new itau.ItauError('Falta a variável ITAU_CONTAS (agência/conta-dígito) no servidor.');
-      let balances = [];
-      try { balances = await client.balances(); } catch (e) { problems.push(`saldo: ${e.message}`); }
-      for (const acc of client.config.accounts) {
-        try {
-          const st = await client.statement(acc, start, end);
-          const bal = balances.find((b) => b.statement_id === acc.id);
-          const balanceCents = bal ? (bal.total_cents ?? bal.available_cents) : null;
-          const r = bank.importApi({
-            account: { bank_code: '341', bank_name: 'Itaú', branch: acc.branch, number: acc.number, digit: acc.digit, label: acc.label },
-            transactions: st.events.map(itau.toTransaction),
-            periodStart: start, periodEnd: end,
-            balanceCents, balanceDate: balanceCents !== null ? T.localDate() : null,
-            source: `API Itaú (${start} a ${end})`, user,
-          });
-          results.push({ ...r, conta: acc.label, eventos: st.events.length, pendentes: st.pending.length, saldo_cents: balanceCents, saldo_disponivel_cents: bal ? bal.available_cents : null });
-        } catch (e) {
-          problems.push(`${acc.label}: ${e.message}`);
+      let creds;
+      try { creds = credentials(); } catch (e) { throw new itau.ItauError(e.message); }
+      for (const c of creds) {
+        const client = itau.createClient({ env, cred: c.cred, ...(requestImpl ? { requestImpl } : {}) });
+        if (!client.config.accounts.length) { problems.push(c.cred ? `${c.label}: sem conta ligada.` : 'Falta a variável ITAU_CONTAS (agência/conta-dígito) no servidor.'); continue; }
+        let balances = [];
+        try { balances = await client.balances(); } catch (e) { problems.push(`${c.label} (saldo): ${e.message}`); }
+        for (const acc of client.config.accounts) {
+          try {
+            const st = await client.statement(acc, start, end);
+            const bal = balances.find((b) => b.statement_id === acc.id);
+            const balanceCents = bal ? (bal.total_cents ?? bal.available_cents) : null;
+            const r = bank.importApi({
+              account: { bank_code: '341', bank_name: 'Itaú', branch: acc.branch, number: acc.number, digit: acc.digit, label: acc.label },
+              transactions: st.events.map(itau.toTransaction),
+              periodStart: start, periodEnd: end,
+              balanceCents, balanceDate: balanceCents !== null ? T.localDate() : null,
+              source: `API Itaú (${start} a ${end})`, user,
+            });
+            results.push({ ...r, conta: acc.label, eventos: st.events.length, pendentes: st.pending.length, saldo_cents: balanceCents, saldo_disponivel_cents: bal ? bal.available_cents : null });
+          } catch (e) {
+            problems.push(`${acc.label}: ${e.message}`);
+          }
         }
+        logs.push(...client.log.slice(0, 6));
       }
       const status = problems.length ? (results.length ? 'parcial' : 'erro') : 'ok';
       const summary = results.map((r) => `${r.conta}: ${r.new} novo(s), ${r.duplicate} já existia(m)`).join(' | ');
@@ -56,7 +76,7 @@ function createItauSync(db, bank, { env = process.env, requestImpl, log = consol
     } finally {
       running = null;
     }
-    return { run: db.prepare('SELECT * FROM sync_runs WHERE id = ?').get(runId), results, problems, log: client.log.slice(0, 8) };
+    return { run: db.prepare('SELECT * FROM sync_runs WHERE id = ?').get(runId), results, problems, log: logs.slice(0, 12) };
   }
 
   // Agenda (testável sem relógio de verdade).
@@ -79,7 +99,7 @@ function createItauSync(db, bank, { env = process.env, requestImpl, log = consol
     setTimeout(tick, 90 * 1000).unref?.();
   }
 
-  return { run, due, start, configured, isRunning: () => running };
+  return { run, due, start, configured, credentials, isRunning: () => running };
 }
 
 module.exports = { createItauSync };

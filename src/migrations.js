@@ -915,6 +915,28 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 18,
+    name: 'Itaú: credenciais e certificados gerados pelo próprio sistema (um por CNPJ)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS itau_credentials (
+          id             INTEGER PRIMARY KEY,
+          label          TEXT,
+          cnpj           TEXT,
+          client_id      TEXT NOT NULL UNIQUE,
+          client_secret  TEXT,            -- guardado com seal() (cifrado se ITAU_CRYPT_KEY existir)
+          key_pem        TEXT NOT NULL,   -- chave privada do certificado, com seal()
+          cert_pem       TEXT NOT NULL,
+          valid_to       TEXT,
+          accounts       TEXT,            -- contas desta credencial: "1364/97535-7,4776/99822-3"
+          active         INTEGER NOT NULL DEFAULT 1,
+          created_by     TEXT,
+          created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;

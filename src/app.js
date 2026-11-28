@@ -1143,15 +1143,65 @@ function createApp(db, { testMode = false } = {}) {
 
   // ---------- admin: Itaú (extrato e saldo pela API oficial) ----------
   let itauLast = null;
+  const itauCert = require('./itau-cert');
+  const daysLeft = (d) => (d ? Math.floor((Date.parse(`${d}T23:59:59Z`) - Date.now()) / 86400000) : null);
+  const itauCredentials = () => db.prepare('SELECT id, label, cnpj, client_id, valid_to, accounts, client_secret IS NOT NULL AS has_secret, created_at, created_by FROM itau_credentials WHERE active = 1 ORDER BY id').all()
+    .map((r) => ({ ...r, client_id: `${String(r.client_id).slice(0, 4)}…${String(r.client_id).slice(-4)}`, days_left: daysLeft(r.valid_to),
+      accounts: String(r.accounts || '').split(/[,;]+/).map((x) => x.trim()).filter(Boolean) }));
   admin.get('/integracoes/itau', (req, res) => {
     const c = itau.config();
     const auto = db.prepare("SELECT value FROM settings WHERE key = 'itau_auto'").get()?.value !== '0';
     res.json({
       configured: { client_id: !!c.clientId, client_secret: !!c.clientSecret, contas: c.accounts.map((a) => a.label) },
       certificate: itau.certInfo(c), auto,
+      credentials: itauCredentials(),
+      store_accounts: db.prepare("SELECT name, cnpj, itau_account FROM locations WHERE kind = 'loja' AND active = 1 AND itau_account IS NOT NULL ORDER BY name").all(),
       runs: db.prepare("SELECT * FROM sync_runs WHERE source = 'itau' ORDER BY id DESC LIMIT 10").all(),
       has_diagnostic: !!itauLast,
     });
+  });
+  // Gera o certificado com o Client ID e o token temporário da planilha do Itaú e guarda a credencial.
+  admin.post('/integracoes/itau/certificado', async (req, res) => {
+    const b = req.body || {};
+    const clientId = String(b.client_id || '').trim();
+    const token = String(b.token || '').trim();
+    if (!clientId || !token) throw new BusinessError('Informe o Client ID e o token temporário da planilha do Itaú.');
+    const accounts = (Array.isArray(b.accounts) ? b.accounts : String(b.accounts || '').split(/[,;]+/)).map((x) => String(x).trim()).filter(Boolean);
+    for (const a of accounts) if (!itau.parseAccount(a)) throw new BusinessError(`Conta inválida: ${a}. Use agência/conta-dígito, ex.: 1364/97535-7.`);
+    if (!accounts.length) throw new BusinessError('Escolha ao menos uma conta para esta credencial.');
+    let out;
+    try {
+      out = await itauCert.requestCertificate({ clientId, token, organization: b.organization, city: b.city, state: b.state, country: b.country || 'BR',
+        insecure: process.env.ITAU_TLS_INSECURE === '1' });
+    } catch (e) {
+      throw new BusinessError(e.message);
+    }
+    const cnpj = U.onlyDigits(b.cnpj || '') || null;
+    db.prepare(`INSERT INTO itau_credentials (label, cnpj, client_id, client_secret, key_pem, cert_pem, valid_to, accounts, active, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(client_id) DO UPDATE SET label = excluded.label, cnpj = excluded.cnpj, client_secret = COALESCE(excluded.client_secret, itau_credentials.client_secret),
+        key_pem = excluded.key_pem, cert_pem = excluded.cert_pem, valid_to = excluded.valid_to, accounts = excluded.accounts, active = 1, created_by = excluded.created_by`)
+      .run(U.cleanText(b.label, 80) || null, cnpj, clientId, out.clientSecret ? itauCert.seal(out.clientSecret) : null, itauCert.seal(out.keyPem), out.certPem, out.validTo,
+        accounts.join(','), req.admin.name);
+    // teste do acesso (o Itaú avisa que as permissões podem levar até 2 dias úteis para liberar)
+    let tokenOk = false; let tokenError = null;
+    if (out.clientSecret) {
+      try {
+        await itau.createClient({ cred: { clientId, clientSecret: out.clientSecret, certPem: out.certPem, keyPem: out.keyPem, accounts } }).getToken();
+        tokenOk = true;
+      } catch (e) { tokenError = e.message; }
+    }
+    res.status(201).json({ ok: true, valid_to: out.validTo, secret_received: !!out.clientSecret, token_ok: tokenOk, token_error: tokenError, credentials: itauCredentials() });
+  });
+  admin.put('/integracoes/itau/certificado/:id', (req, res) => {
+    const accounts = (Array.isArray(req.body?.accounts) ? req.body.accounts : String(req.body?.accounts || '').split(/[,;]+/)).map((x) => String(x).trim()).filter(Boolean);
+    for (const a of accounts) if (!itau.parseAccount(a)) throw new BusinessError(`Conta inválida: ${a}.`);
+    db.prepare('UPDATE itau_credentials SET accounts = ?, label = COALESCE(?, label) WHERE id = ?').run(accounts.join(','), U.cleanText(req.body?.label, 80) || null, idParam(req));
+    res.json({ credentials: itauCredentials() });
+  });
+  admin.delete('/integracoes/itau/certificado/:id', (req, res) => {
+    db.prepare('UPDATE itau_credentials SET active = 0 WHERE id = ?').run(idParam(req));
+    res.json({ credentials: itauCredentials() });
   });
   admin.post('/integracoes/itau/buscar', async (req, res) => {
     const days = Math.max(1, Math.min(90, Number(req.body?.days) || 7));
